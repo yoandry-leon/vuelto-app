@@ -1,3 +1,4 @@
+import { type Account, accountOf } from './accounts';
 import { categoryLabel, SOURCE_LABEL, SUBCATEGORIES } from './categories';
 import { cfeKey } from './cfe';
 import { formatPesos, formatUsd, parseAmount, round2, USD_RATE } from './money';
@@ -20,9 +21,6 @@ export interface Draft {
 }
 
 export type Currency = 'UYU' | 'USD';
-
-/** Medios de pago que recorre el botón del teclado, en orden. */
-export const KEYPAD_PAYMENTS: PaymentMethod[] = ['Efectivo', 'Débito', 'Crédito', 'Transferencia'];
 
 /**
  * La grilla de categorías del teclado: las del día a día (los servicios son gastos fijos, van en Facturas).
@@ -80,6 +78,8 @@ export interface KeypadExpense {
   category: Category;
   subcategory: string;
   payment: PaymentMethod;
+  /** La cuenta elegida; `payment` es su tipo. */
+  accountId?: string;
   date: IsoDate;
 }
 
@@ -98,6 +98,7 @@ export function keypadDraft(e: KeypadExpense, id: string, rate = USD_RATE): Draf
       lines: [{ raw: description || title, pretty: title, category: e.category, subcategory: e.subcategory, amount: usd ? round2(e.amount * rate) : e.amount }],
       discounts: [],
       ...(usd ? { usd: { amount: e.amount, rate } } : {}),
+      ...(e.accountId ? { accountId: e.accountId } : {}),
     },
   };
 }
@@ -172,13 +173,17 @@ export function draftOrigin(d: Draft): string {
   return d.suggested ? 'Sugerencia' : SOURCE_LABEL[d.ticket.source];
 }
 
-/** "Salidas · Débito"; en una compra, "Supermercado · 3 productos · Efectivo" (o sin la categoría si mezcla varias). */
-export function draftSubtitle(d: Draft): string {
+/**
+ * "Salidas · BROU débito"; en una compra, "Supermercado · 3 productos · Efectivo" (o sin la categoría si mezcla
+ * varias). Con las cuentas se muestra la del gasto; sin ellas, el medio de pago.
+ */
+export function draftSubtitle(d: Draft, accounts?: Account[]): string {
   const t = d.ticket;
-  if (t.lines.length < 2) return `${categoryLabel(mainCategory(t), t.lines[0]?.subcategory)} · ${t.payment}`;
+  const from = (accounts && accountOf(t, accounts)?.name) ?? t.payment;
+  if (t.lines.length < 2) return `${categoryLabel(mainCategory(t), t.lines[0]?.subcategory)} · ${from}`;
   const categories = new Set(t.lines.map((l) => l.category));
   const what = categories.size === 1 ? `${categoryLabel(t.lines[0].category, t.lines[0].subcategory)} · ` : '';
-  return `${what}${t.lines.length} productos · ${t.payment}`;
+  return `${what}${t.lines.length} productos · ${from}`;
 }
 
 /** El total de la carga: "$ 1.012", o "$ 1.012 + USD 20" si hay gastos en dólares. */
@@ -270,7 +275,7 @@ export function frequentDraft(f: FrequentExpense, date: IsoDate, id: string): Dr
 /** Un ticket con QR de la DGI, confirmado en su pantalla. */
 export function qrDraft(
   header: CfeHeader,
-  input: { store: string; payment: PaymentMethod; lines: Line[]; discounts: Discount[]; photoUri?: string },
+  input: { store: string; payment: PaymentMethod; accountId?: string; lines: Line[]; discounts: Discount[]; photoUri?: string },
   id: string,
 ): Draft {
   return {
@@ -285,6 +290,7 @@ export function qrDraft(
       discounts: input.discounts,
       cfe: header,
       ...(input.photoUri ? { photoUri: input.photoUri } : {}),
+      ...(input.accountId ? { accountId: input.accountId } : {}),
     },
   };
 }
@@ -328,6 +334,7 @@ export function paperDrafts(input: {
   store: string;
   date: IsoDate;
   payment: PaymentMethod;
+  accountId?: string;
   rows: PaperRow[];
   writtenTotal?: number;
   photoUri?: string;
@@ -343,9 +350,9 @@ export function paperDrafts(input: {
     const sum = round2(lines.reduce((s, l) => s + l.amount, 0));
     const extra = round2(sum - input.qr.total);
     const discounts: Discount[] = extra > QR_TOLERANCE ? [{ label: 'Descuentos del ticket', kind: 'otro', amount: extra }] : [];
-    return [qrDraft(input.qr, { store, payment: input.payment, lines, discounts, ...photo }, input.newId())];
+    return [qrDraft(input.qr, { store, payment: input.payment, accountId: input.accountId, lines, discounts, ...photo }, input.newId())];
   }
-  const base = { source: 'papel' as const, store, date: input.date, payment: input.payment, discounts: [], ...photo };
+  const base = { source: 'papel' as const, store, date: input.date, payment: input.payment, discounts: [], ...photo, ...(input.accountId ? { accountId: input.accountId } : {}) };
   if (!rows.length) {
     const total = input.writtenTotal;
     if (!total || total <= 0) return [];

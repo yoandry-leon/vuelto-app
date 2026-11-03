@@ -27,7 +27,7 @@
           <div v-for="d in fresh" :key="d.id" class="news-row">
             <button type="button" class="grow" @click="editDraft(d)">
               <span class="t">{{ d.title }}</span>
-              <span class="s">{{ draftSubtitle(d) }}</span>
+              <span class="s">{{ draftSubtitle(d, finanzas.accounts) }}</span>
             </button>
             <span class="amt rb-amount">{{ draftAmountText(d) }}</span>
             <button type="button" class="x" :aria-label="`Quitar ${d.title}`" @click="removeFresh(d.id)">
@@ -90,6 +90,7 @@
 import { actionSheetController, alertController, IonContent } from '@ionic/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import CategorySheet from '@/components/CategorySheet.vue';
+import { lastAccountId } from '@/domain/accounts';
 import { cartTotal, type Draft, draftAmountText, draftSubtitle, phraseDrafts, splitDuplicates, splitPurchase } from '@/domain/carga';
 import { todayIso } from '@/domain/dates';
 import { formatPesos, parseAmount } from '@/domain/money';
@@ -97,6 +98,7 @@ import { parseQuickEntries } from '@/domain/quickEntry';
 import type { Category, PaymentMethod } from '@/domain/types';
 import { type Listening, speechStatus, type SpeechStatus, startListening } from '@/services/speech';
 import { newDraftId, useCargaStore } from '@/stores/carga';
+import { useFinanzasStore } from '@/stores/finanzas';
 import { useGastosStore } from '@/stores/gastos';
 
 const props = defineProps<{ autoListen?: boolean }>();
@@ -104,6 +106,7 @@ const props = defineProps<{ autoListen?: boolean }>();
 const emit = defineEmits<{ keypad: []; save: [] }>();
 
 const gastos = useGastosStore();
+const finanzas = useFinanzasStore();
 const carga = useCargaStore();
 
 /** Lo dictado en esta pantalla, que pasa a la carga al volver al teclado o al guardar. */
@@ -146,7 +149,8 @@ const statusNote = computed(() => {
   return 'Para dictar sin señal, descargá el español en los ajustes de dictado del teléfono.';
 });
 
-const lastPayment = (): PaymentMethod => gastos.sorted.find((t) => t.source === 'texto' || t.source === 'voz')?.payment ?? 'Efectivo';
+/** El medio de pago si no se dice: el de la cuenta del último gasto. */
+const lastPayment = (): PaymentMethod => finanzas.accounts.find((a) => a.id === lastAccountId(gastos.tickets, finanzas.accounts))?.payment ?? 'Efectivo';
 
 /** La alerta de la pantalla: un duplicado, una frase sin montos, un error del micrófono o un teléfono que no dicta. */
 const alert = computed((): { title: string; detail: string; action?: { label: string; run: () => void } } | undefined => {
@@ -189,7 +193,8 @@ function understand(text: string, forRound: number) {
   notUnderstood.value = '';
   if (!phrase.value) return;
   const entries = parseQuickEntries(phrase.value, todayIso());
-  const drafts = phraseDrafts(phrase.value, entries, { source: 'voz', payment: lastPayment(), date: todayIso(), newId: newDraftId });
+  // Cada gasto toma la cuenta de su medio de pago ("con débito" → la de débito)
+  const drafts = carga.withAccounts(phraseDrafts(phrase.value, entries, { source: 'voz', payment: lastPayment(), date: todayIso(), newId: newDraftId }));
   // En compilaciones de prueba llega a la consola de Xcode/logcat: sirve para sumar frases reales a los tests
   console.info(`Dictado ${JSON.stringify({ phrase: phrase.value, parsed: entries })}`);
   if (!drafts.length) {

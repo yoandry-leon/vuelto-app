@@ -151,6 +151,7 @@ const drafts = computed(() =>
         store: qr.value?.store ?? vendor.value,
         date: date.value,
         payment: qr.value?.payment ?? 'Efectivo',
+        accountId: qr.value?.accountId,
         rows: rows.value,
         writtenTotal: writtenTotal.value,
         photoUri: photo.value.photo || undefined,

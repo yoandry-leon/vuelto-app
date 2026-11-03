@@ -30,13 +30,22 @@
         <div class="filters-row">
         <div class="filters" role="tablist" aria-label="Filtrar movimientos">
           <button type="button" role="tab" class="rb-chip" :class="{ on: filter === 'todos' }" :aria-selected="filter === 'todos'" @click="filter = 'todos'">Todos</button>
-          <button v-if="gastos.pending.length" type="button" role="tab" class="rb-chip" :class="{ on: filter === 'sin-subir' }" :aria-selected="filter === 'sin-subir'" @click="filter = 'sin-subir'">Sin subir · {{ gastos.pending.length }}</button>
-          <button v-if="gastos.toReview.length" type="button" role="tab" class="rb-chip" :class="{ on: filter === 'revisar' }" :aria-selected="filter === 'revisar'" @click="filter = 'revisar'">
-            <span v-if="filter !== 'revisar'" class="rb-dot" style="width: 8px; height: 8px; background: var(--rb-warn)" />Por revisar · {{ gastos.toReview.length }}
-          </button>
           <button v-if="categoryFilter" type="button" class="rb-chip on" @click="categoryFilter = undefined">
             {{ categoryFilter }}
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <!-- De qué cuenta salió: filtra la lista o lleva a "Tus cuentas" -->
+          <button v-if="accountFilter" type="button" class="rb-chip on" @click="accountFilter = undefined">
+            {{ accountFilter.name }}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <button v-else type="button" class="rb-chip" @click="pickAccount">
+            Cuenta
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <button v-if="gastos.pending.length" type="button" role="tab" class="rb-chip" :class="{ on: filter === 'sin-subir' }" :aria-selected="filter === 'sin-subir'" @click="filter = 'sin-subir'">Sin subir · {{ gastos.pending.length }}</button>
+          <button v-if="gastos.toReview.length" type="button" role="tab" class="rb-chip" :class="{ on: filter === 'revisar' }" :aria-selected="filter === 'revisar'" @click="filter = 'revisar'">
+            <span v-if="filter !== 'revisar'" class="rb-dot" style="width: 8px; height: 8px; background: var(--rb-warn)" />Por revisar · {{ gastos.toReview.length }}
           </button>
         </div>
         <button v-if="!selecting && days.length" type="button" class="select-link" @click="selecting = true">Seleccionar</button>
@@ -53,7 +62,7 @@
           </div>
         </div>
         <div v-if="!days.length" class="rb-empty">
-          <span class="t">{{ query || filter !== 'todos' || categoryFilter ? 'No hay movimientos con ese filtro' : `Sin gastos en ${monthName(month)}` }}</span>
+          <span class="t">{{ query || filter !== 'todos' || categoryFilter || accountFilter ? 'No hay movimientos con ese filtro' : `Sin gastos en ${monthName(month)}` }}</span>
         </div>
 
         <div v-if="selecting" class="bulk">
@@ -73,11 +82,13 @@ import { useRoute } from 'vue-router';
 import GastoRow from '@/components/GastoRow.vue';
 import SyncIcon from '@/components/SyncIcon.vue';
 import { useFixedCostIds } from '@/composables/fixedCosts';
+import { type Account, accountOf, spentByAccount } from '@/domain/accounts';
 import { monthKey, monthName, relativeDay, todayIso } from '@/domain/dates';
 import { formatPesos, round2 } from '@/domain/money';
 import { normalize } from '@/domain/products';
 import { isIncome, ticketTotals } from '@/domain/totals';
 import type { Category, Ticket } from '@/domain/types';
+import { useFinanzasStore } from '@/stores/finanzas';
 import { useGastosStore } from '@/stores/gastos';
 import { useSyncStore } from '@/stores/sync';
 
@@ -85,6 +96,7 @@ const router = useIonRouter();
 const fixedIds = useFixedCostIds();
 const route = useRoute();
 const gastos = useGastosStore();
+const finanzas = useFinanzasStore();
 const sync = useSyncStore();
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -103,6 +115,36 @@ watch(
   },
   { immediate: true },
 );
+/** "Ver sus gastos" en Tus cuentas llega con ?cuenta= */
+const accountFilterId = ref<string>();
+const accountFilter = computed({
+  get: () => finanzas.accounts.find((a) => a.id === accountFilterId.value),
+  set: (a: Account | undefined) => (accountFilterId.value = a?.id),
+});
+watch(
+  () => route.query.cuenta,
+  (c) => {
+    if (typeof c === 'string' && c) {
+      accountFilterId.value = c;
+      filter.value = 'todos';
+    }
+  },
+  { immediate: true },
+);
+
+/** "Cuenta ▾": cada cuenta con lo que salió de ella este mes, y el acceso a Tus cuentas. */
+async function pickAccount() {
+  const spent = spentByAccount(gastos.tickets, finanzas.accounts, month.value);
+  const sheet = await actionSheetController.create({
+    header: `De qué cuenta salió · ${monthName(month.value)}`,
+    buttons: [
+      ...spent.map((r) => ({ text: `${r.account.name} · ${formatPesos(-r.spent)}`, handler: () => void (accountFilterId.value = r.account.id) })),
+      { text: 'Ver tus cuentas', handler: () => void router.push('/tabs/movimientos/cuentas') },
+      { text: 'Cancelar', role: 'cancel' },
+    ],
+  });
+  await sheet.present();
+}
 
 const syncState = computed(() => {
   if (gastos.toReview.length) return 'revisar' as const;
@@ -127,6 +169,7 @@ function matches(t: Ticket): boolean {
   if (filter.value === 'sin-subir' && t.sync.state !== 'pendiente') return false;
   if (filter.value === 'revisar' && !t.review) return false;
   if (categoryFilter.value && !t.lines.some((l) => l.category === categoryFilter.value)) return false;
+  if (accountFilter.value && accountOf(t, finanzas.accounts)?.id !== accountFilter.value.id) return false;
   const q = normalize(query.value.trim());
   if (!q) return true;
   const text = normalize([t.store, t.phrase ?? '', ...t.lines.flatMap((l) => [l.pretty, l.category, l.subcategory])].join(' '));

@@ -89,6 +89,8 @@ export interface Ticket {
   note?: string;
   /** Es el pago de esa factura (un gasto fijo): se ve entre los gastos pero no sale del presupuesto del día a día. */
   billId?: string;
+  /** La cuenta de la que salió (o a la que entró). `payment` es el tipo de esa cuenta. Falta en datos viejos. */
+  accountId?: string;
   sync: SyncInfo;
   createdAt: string;
 }

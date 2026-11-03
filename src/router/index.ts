@@ -24,6 +24,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'movimientos', component: () => import('@/views/MovimientosPage.vue') },
       { path: 'movimientos/gasto/:id', component: () => import('@/views/GastoPage.vue'), props: true },
       { path: 'movimientos/sync', component: () => import('@/views/SyncPage.vue') },
+      { path: 'movimientos/cuentas', component: () => import('@/views/CuentasPage.vue') },
       // Rutas de antes del rediseño (Sincronizar era una pestaña)
       { path: 'sync', redirect: '/tabs/movimientos/sync' },
       { path: 'sync/gasto/:id', redirect: (to) => `/tabs/movimientos/gasto/${to.params.id}` },

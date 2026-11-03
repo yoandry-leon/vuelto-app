@@ -64,8 +64,8 @@
 <script setup lang="ts">
 import { actionSheetController, alertController, IonContent, IonPage, toastController, useIonRouter } from '@ionic/vue';
 import { computed } from 'vue';
+import { type Account, accountFor, accountOf } from '@/domain/accounts';
 import { billPaymentTicket, type BillStatus, billsForMonth } from '@/domain/bills';
-import type { PaymentMethod } from '@/domain/types';
 import { dueLabel, monthKey, monthName, todayIso } from '@/domain/dates';
 import { formatPesos, parseAmount } from '@/domain/money';
 import { useFinanzasStore } from '@/stores/finanzas';
@@ -107,10 +107,11 @@ function edit(id: string) {
   router.push(`/tabs/inicio/facturas/${id}`);
 }
 
-/** Cómo se pagó la última vez esta factura; si no hay, débito en las automáticas y transferencia en las demás. */
-function lastPayment(b: BillStatus): PaymentMethod {
+/** La cuenta con que se pagó la última vez esta factura; si no hay, la de débito en las automáticas y la de transferencias en las demás. */
+function lastAccount(b: BillStatus): Account | undefined {
   const previous = gastos.sorted.find((t) => t.billId === b.bill.id);
-  return previous?.payment ?? (b.bill.autopay ? 'Débito' : 'Transferencia');
+  if (previous) return accountOf(previous, finanzas.accounts);
+  return accountFor(finanzas.accounts, b.bill.autopay ? 'Débito' : 'Transferencia') ?? finanzas.accounts[0];
 }
 
 /**
@@ -134,7 +135,8 @@ async function markPaid(b: BillStatus) {
     amount = typed;
     await finanzas.setBillAmount(b.bill.id, month.value, amount);
   }
-  await gastos.addAll([billPaymentTicket(b.bill, { amount, date: today.value, payment: lastPayment(b) })]);
+  const account = lastAccount(b);
+  await gastos.addAll([billPaymentTicket(b.bill, { amount, date: today.value, payment: account?.payment ?? 'Transferencia', accountId: account?.id })]);
   const toast = await toastController.create({ message: `${b.bill.name}: pagada y anotada en Movimientos`, duration: 2000, position: 'top', cssClass: 'rb-toast' });
   await toast.present();
 }

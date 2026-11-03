@@ -29,9 +29,9 @@
         <span class="grow">Categoría</span>
         <span class="value">{{ category.category }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
       </button>
-      <button type="button" class="rb-row big" @click="pickPayment">
-        <span class="grow">Medio de pago</span>
-        <span class="value">{{ payment }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
+      <button type="button" class="rb-row big" @click="accountOpen = true">
+        <span class="grow">Cuenta</span>
+        <span class="value">{{ account?.name ?? 'Elegí la cuenta' }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
       </button>
     </div>
 
@@ -49,30 +49,33 @@
     <button v-if="duplicate === 'guardado'" type="button" class="rb-btn neutral confirm" @click="emit('back')">Escanear otro</button>
     <button v-else type="button" class="rb-btn primary confirm" :disabled="!!duplicate || busy" @click="confirm">Confirmar y agregar · {{ formatPesos(header.total) }}</button>
 
+    <account-sheet :open="accountOpen" :selected="account?.id" :subtitle="store" @select="pickAccount" @close="accountOpen = false" />
     <category-sheet :open="sheetOpen" :category="category.category" :subcategory="category.subcategory" :subtitle="store" @select="pickCategory" @close="sheetOpen = false" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core';
-import { actionSheetController } from '@ionic/vue';
 import { computed, ref } from 'vue';
+import AccountSheet from '@/components/AccountSheet.vue';
 import CategorySheet from '@/components/CategorySheet.vue';
+import { type Account, accountFor, accountOf } from '@/domain/accounts';
 import { qrDraft } from '@/domain/carga';
-import { PAYMENTS } from '@/domain/categories';
 import { cfeLabel, formatRut } from '@/domain/cfe';
 import { MESES } from '@/domain/dates';
 import { formatPesos } from '@/domain/money';
-import type { Category, PaymentMethod } from '@/domain/types';
+import type { Category } from '@/domain/types';
 import { pickImageFile, takePaperPhoto } from '@/services/paperCapture';
 import { demoReceiptReader } from '@/services/receiptReader';
 import { newDraftId, useCargaStore } from '@/stores/carga';
+import { useFinanzasStore } from '@/stores/finanzas';
 import { useGastosStore } from '@/stores/gastos';
 
 /** back: volver a la cámara · added: agregado a la carga (con lo que se muestra) · split: a la foto para separar productos. */
 const emit = defineEmits<{ back: []; added: [text: string]; split: [] }>();
 
 const gastos = useGastosStore();
+const finanzas = useFinanzasStore();
 const carga = useCargaStore();
 
 const header = computed(() => carga.qr?.header);
@@ -87,9 +90,15 @@ const duplicate = computed(() => {
 
 const categoryChoice = ref<{ category: Category; subcategory: string }>();
 const category = computed(() => categoryChoice.value ?? { category: known.value?.category ?? 'Supermercado', subcategory: 'Almacén' });
-/** El medio de pago de la última vez en ese comercio; si no, débito. */
-const paymentChoice = ref<PaymentMethod>();
-const payment = computed(() => paymentChoice.value ?? gastos.sorted.find((t) => t.cfe?.rut === header.value?.rut)?.payment ?? 'Débito');
+/** La cuenta de la última vez en ese comercio; si no, la de débito (o la primera). */
+const accountChoice = ref<Account>();
+const account = computed(() => {
+  if (accountChoice.value) return accountChoice.value;
+  const previous = gastos.sorted.find((t) => t.cfe?.rut === header.value?.rut);
+  return (previous && accountOf(previous, finanzas.accounts)) ?? accountFor(finanzas.accounts, 'Débito') ?? finanzas.accounts[0];
+});
+const payment = computed(() => account.value?.payment ?? 'Débito');
+const accountOpen = ref(false);
 const sheetOpen = ref(false);
 const busy = ref(false);
 
@@ -104,18 +113,15 @@ function pickCategory(v: { category: Category; subcategory: string }) {
   sheetOpen.value = false;
 }
 
-async function pickPayment() {
-  const sheet = await actionSheetController.create({
-    header: 'Medio de pago',
-    buttons: [...PAYMENTS.map((p) => ({ text: p, handler: () => void (paymentChoice.value = p) })), { text: 'Cancelar', role: 'cancel' }],
-  });
-  await sheet.present();
+function pickAccount(a: Account) {
+  accountChoice.value = a;
+  accountOpen.value = false;
 }
 
 /** Separar por productos: una foto del ticket y la pantalla del papel, con el total del QR como control. */
 async function split() {
   if (!header.value) return;
-  const qr = { header: header.value, store: store.value, payment: payment.value, ...category.value };
+  const qr = { header: header.value, store: store.value, payment: payment.value, accountId: account.value?.id, ...category.value };
   if (!Capacitor.isNativePlatform()) {
     const picked = await pickImageFile(true);
     if (!picked) return;
@@ -147,7 +153,7 @@ async function confirm() {
       read.lines.length === 1
         ? [{ ...read.lines[0], pretty: store.value, ...category.value }]
         : read.lines.map((l) => (categoryChoice.value ? { ...l, ...categoryChoice.value } : l));
-    carga.add([qrDraft(h, { store: store.value, payment: payment.value, lines, discounts: read.discounts }, newDraftId())]);
+    carga.add([qrDraft(h, { store: store.value, payment: payment.value, accountId: account.value?.id, lines, discounts: read.discounts }, newDraftId())]);
     carga.qr = undefined;
     emit('added', `${store.value} ${formatPesos(h.total)}`);
   } finally {

@@ -56,7 +56,7 @@
             >{{ c.label }}</button>
           </div>
           <div class="opts">
-            <button type="button" class="opt" aria-label="Medio de pago" @click="cyclePayment">{{ shownPayment }}</button>
+            <button type="button" class="opt account" aria-label="Cuenta" @click="accountOpen = true">{{ shownAccount?.name ?? 'Cuenta' }}</button>
             <label class="opt date">
               <span>{{ dateLabel }}</span>
               <input v-model="date" type="date" :max="today" aria-label="Fecha" @change="dateTouched = true" />
@@ -74,6 +74,7 @@
         </div>
       </div>
 
+      <account-sheet :open="accountOpen" :selected="shownAccount?.id" subtitle="De dónde sale la plata" @select="pickAccount" @close="accountOpen = false" />
       <ion-modal :is-open="sheet === 'carga'" class="rb-full" @did-dismiss="sheet = null">
         <carga-sheet :editing="editorDrafts" @close="sheet = null" @save="saveFromSheet" @edit="editDraft" @discard-editor="resetEditor" />
       </ion-modal>
@@ -92,11 +93,12 @@ import { alertController, IonContent, IonModal, IonPage, onIonViewDidLeave, onIo
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import CamaraSheet from '@/components/registrar/CamaraSheet.vue';
+import AccountSheet from '@/components/AccountSheet.vue';
 import CargaSheet from '@/components/registrar/CargaSheet.vue';
 import VozSheet from '@/components/registrar/VozSheet.vue';
 import { lastTab } from '@/composables/lastTab';
 import {
-  cartTotal, type Draft, draftAmountText, frequentDraft, type FrequentExpense, frequentExpenses, KEYPAD_CATEGORIES, KEYPAD_PAYMENTS,
+  cartTotal, type Draft, draftAmountText, frequentDraft, type FrequentExpense, frequentExpenses, KEYPAD_CATEGORIES,
   keypadAmount, keypadDisplay, keypadDraft, keypadSubcategory, phraseDrafts, pressKey,
 } from '@/domain/carga';
 import { categoryLabel } from '@/domain/categories';
@@ -104,8 +106,10 @@ import { relativeDay, timeOf, todayIso } from '@/domain/dates';
 import { formatPesos, round2 } from '@/domain/money';
 import { normalize } from '@/domain/products';
 import { parseQuickEntries, parseQuickEntry } from '@/domain/quickEntry';
-import type { Category, PaymentMethod } from '@/domain/types';
+import { type Account, accountFor, lastAccountId } from '@/domain/accounts';
+import type { Category } from '@/domain/types';
 import { newDraftId, useCargaStore } from '@/stores/carga';
+import { useFinanzasStore } from '@/stores/finanzas';
 import { useGastosStore } from '@/stores/gastos';
 import { useSyncStore } from '@/stores/sync';
 
@@ -114,6 +118,7 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'del'];
 const route = useRoute();
 const router = useIonRouter();
 const gastos = useGastosStore();
+const finanzas = useFinanzasStore();
 const carga = useCargaStore();
 const sync = useSyncStore();
 
@@ -126,9 +131,11 @@ const amountText = ref('');
 const currency = ref<'UYU' | 'USD'>('UYU');
 const desc = ref('');
 const categoryChoice = ref<{ category: Category; subcategory: string }>();
-const lastPayment = (): PaymentMethod => gastos.sorted.find((t) => t.source === 'texto' || t.source === 'voz')?.payment ?? gastos.sorted[0]?.payment ?? 'Efectivo';
-const payment = ref<PaymentMethod>(lastPayment());
-const paymentTouched = ref(false);
+/** La cuenta de la que sale el gasto: la del último gasto, hasta que se elija otra. */
+const lastAccount = () => lastAccountId(gastos.tickets, finanzas.accounts);
+const accountId = ref(lastAccount());
+const accountTouched = ref(false);
+const accountOpen = ref(false);
 const today = ref(todayIso());
 const date = ref(today.value);
 const dateTouched = ref(false);
@@ -152,7 +159,12 @@ const cells = computed(() => {
   return [...KEYPAD_CATEGORIES.slice(0, -1), { label: s.category, category: s.category, subcategory: s.subcategory }];
 });
 
-const shownPayment = computed(() => (!paymentTouched.value && descEntries.value?.payment) || payment.value);
+const chosenAccount = computed(() => finanzas.accounts.find((a) => a.id === accountId.value) ?? finanzas.accounts[0]);
+/** Si la descripción dice el medio de pago ("450 feria efectivo"), se usa la cuenta de ese tipo, salvo que se haya elegido otra. */
+const shownAccount = computed(() => {
+  const said = !accountTouched.value && descEntries.value?.payment;
+  return (said && accountFor(finanzas.accounts, said, accountId.value)) || chosenAccount.value;
+});
 const dateLabel = computed(() => {
   if (date.value === today.value) return `Hoy, ${timeOf(now.value)}`;
   const d = relativeDay(date.value, today.value);
@@ -163,12 +175,15 @@ const dateLabel = computed(() => {
 const editorDrafts = computed((): Draft[] => {
   if (typed.value) {
     const { category, subcategory } = selected.value;
-    return [keypadDraft({ amount: typed.value, currency: currency.value, description: desc.value, category, subcategory, payment: payment.value, date: date.value }, 'editor')];
+    const account = shownAccount.value;
+    return [keypadDraft({ amount: typed.value, currency: currency.value, description: desc.value, category, subcategory, payment: account?.payment ?? 'Efectivo', accountId: account?.id, date: date.value }, 'editor')];
   }
   const entries = descEntries.value;
   if (!entries?.items.length) return [];
-  const drafts = phraseDrafts(desc.value, entries, { source: 'texto', payment: payment.value, date: dateTouched.value ? date.value : entries.date ?? date.value, newId: () => 'editor' });
-  if (paymentTouched.value) drafts.forEach((d) => (d.ticket.payment = payment.value));
+  const account = chosenAccount.value;
+  const drafts = phraseDrafts(desc.value, entries, { source: 'texto', payment: account?.payment ?? 'Efectivo', date: dateTouched.value ? date.value : entries.date ?? date.value, newId: () => 'editor' });
+  // Una cuenta elegida a mano vale para todo; si no, cada gasto toma la del medio de pago dicho al guardarse
+  if (accountTouched.value && account) drafts.forEach((d) => Object.assign(d.ticket, { payment: account.payment, accountId: account.id }));
   // Una categoría tocada a mano gana sobre la entendida, si es un gasto de una sola línea
   if (categoryChoice.value && drafts.length === 1 && drafts[0].ticket.lines.length === 1) Object.assign(drafts[0].ticket.lines[0], categoryChoice.value);
   return drafts;
@@ -201,10 +216,10 @@ function pickCell(c: { label: string; category: Category; subcategory: string })
   categoryChoice.value = { category: c.category, subcategory: keypadSubcategory(c, inferred.value) };
 }
 
-function cyclePayment() {
-  const i = KEYPAD_PAYMENTS.indexOf(shownPayment.value);
-  payment.value = KEYPAD_PAYMENTS[(i + 1) % KEYPAD_PAYMENTS.length];
-  paymentTouched.value = true;
+function pickAccount(a: Account) {
+  accountId.value = a.id;
+  accountTouched.value = true;
+  accountOpen.value = false;
 }
 
 function withIds(drafts: Draft[]): Draft[] {
@@ -241,9 +256,9 @@ function resetAll() {
   carga.clear();
   resetEditor();
   currency.value = 'UYU';
-  paymentTouched.value = false;
+  accountTouched.value = false;
   dateTouched.value = false;
-  payment.value = lastPayment();
+  accountId.value = lastAccount();
   date.value = today.value;
 }
 
@@ -283,8 +298,8 @@ function editDraft(d: Draft) {
   currency.value = d.ticket.usd ? 'USD' : 'UYU';
   desc.value = d.title;
   if (line) categoryChoice.value = { category: line.category, subcategory: line.subcategory };
-  payment.value = d.ticket.payment;
-  paymentTouched.value = true;
+  accountId.value = d.ticket.accountId ?? accountFor(finanzas.accounts, d.ticket.payment)?.id;
+  accountTouched.value = true;
   date.value = d.ticket.date;
   dateTouched.value = d.ticket.date !== today.value;
   sheet.value = null;
@@ -320,7 +335,7 @@ function enter() {
   today.value = todayIso();
   now.value = new Date().toISOString();
   if (!dateTouched.value) date.value = today.value;
-  if (!paymentTouched.value && !carga.items.length) payment.value = lastPayment();
+  if (!accountTouched.value && !carga.items.length) accountId.value = lastAccount();
   if (route.fullPath === handledPath) return;
   handledPath = route.fullPath;
   const modo = String(route.query.modo ?? '');
@@ -386,6 +401,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 .rb-wrap .cat { height: 44px; border-radius: 10px; background: var(--rb-bg); font-size: 14px; font-weight: 500; text-align: center; }
 .rb-wrap .cat.on { background: var(--rb-accent); color: #fff; }
 .opts { display: flex; gap: 6px; }
+.rb-wrap .opt.account { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
 .rb-wrap .opt { flex: 1; height: 44px; border-radius: 10px; background: var(--rb-bg); font-size: 15px; text-align: center; display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
 .opt.date input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .keypad { margin-top: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }

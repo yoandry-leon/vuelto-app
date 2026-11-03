@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import { assignAccounts, lastAccountId } from '@/domain/accounts';
 import { cartTotal, type Draft } from '@/domain/carga';
 import { cfeKey } from '@/domain/cfe';
 import type { Category, CfeHeader, PaymentMethod, Ticket } from '@/domain/types';
 import type { CapturedPaper } from '@/services/paperCapture';
+import { useFinanzasStore } from './finanzas';
 import { useGastosStore } from './gastos';
 
 export function newDraftId(): string {
@@ -17,6 +19,7 @@ export interface QrContext {
   category: Category;
   subcategory: string;
   payment: PaymentMethod;
+  accountId?: string;
 }
 
 /**
@@ -34,9 +37,17 @@ export const useCargaStore = defineStore('carga', () => {
 
   const total = computed(() => cartTotal(items.value));
 
+  /** Les pone cuenta a los borradores que no la traen (según su medio de pago), para mostrarla en la carga. */
+  function withAccounts(drafts: Draft[]): Draft[] {
+    const gastos = useGastosStore();
+    const { accounts } = useFinanzasStore();
+    const preferred = lastAccountId(gastos.tickets, accounts);
+    return drafts.map((d) => ({ ...d, ticket: assignAccounts([d.ticket], accounts, preferred)[0] }));
+  }
+
   function add(drafts: Draft[]) {
     if (!drafts.length) return;
-    items.value.push(...drafts);
+    items.value.push(...withAccounts(drafts));
     lastId.value = drafts[drafts.length - 1].id;
   }
 
@@ -65,5 +76,5 @@ export const useCargaStore = defineStore('carga', () => {
     return saved;
   }
 
-  return { items, lastId, qr, photo, total, add, remove, clear, hasCfe, saveAll };
+  return { items, lastId, qr, photo, total, add, remove, clear, hasCfe, saveAll, withAccounts };
 });

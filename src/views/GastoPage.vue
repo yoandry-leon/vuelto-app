@@ -43,9 +43,9 @@
               <span class="grow">Categoría</span>
               <span class="value">{{ categoryLabel(category.category, category.subcategory) }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
             </button>
-            <button type="button" class="rb-row" @click="pickPayment">
-              <span class="grow">{{ kind === 'ingreso' ? 'Cómo entró' : 'Medio de pago' }}</span>
-              <span class="value">{{ payment }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
+            <button type="button" class="rb-row" @click="accountOpen = true">
+              <span class="grow">{{ kind === 'ingreso' ? 'A qué cuenta entró' : 'Cuenta' }}</span>
+              <span class="value">{{ account?.name ?? payment }}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#AEAEB2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg></span>
             </button>
             <label class="rb-row date">
               <span class="grow">Fecha</span>
@@ -100,6 +100,14 @@
 
         <div v-else class="rb-empty"><span class="t">No encontramos ese movimiento</span></div>
       </div>
+      <account-sheet
+        :open="accountOpen"
+        :selected="account?.id"
+        :title="kind === 'ingreso' ? 'A qué cuenta entró' : 'Cuenta'"
+        :subtitle="store"
+        @select="pickAccount"
+        @close="accountOpen = false"
+      />
       <category-sheet
         :open="editing !== null"
         :category="editingLine?.category ?? 'Otros'"
@@ -114,12 +122,14 @@
 
 <script setup lang="ts">
 import { Capacitor } from '@capacitor/core';
-import { actionSheetController, alertController, IonContent, IonPage, useIonRouter } from '@ionic/vue';
+import { alertController, IonContent, IonPage, useIonRouter } from '@ionic/vue';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import AccountSheet from '@/components/AccountSheet.vue';
 import CategorySheet from '@/components/CategorySheet.vue';
 import SyncIcon from '@/components/SyncIcon.vue';
 import { useFixedCostIds } from '@/composables/fixedCosts';
-import { categoryLabel, PAYMENTS } from '@/domain/categories';
+import { type Account, accountOf } from '@/domain/accounts';
+import { categoryLabel } from '@/domain/categories';
 import { cfeLabel } from '@/domain/cfe';
 import { MESES, timeOf, todayIso } from '@/domain/dates';
 import { formatPesos, parseAmount, round2, USD_RATE } from '@/domain/money';
@@ -127,6 +137,7 @@ import { parseQuickEntry } from '@/domain/quickEntry';
 import { checkAgainstQr, checkAgainstWrittenTotal, ticketTotals } from '@/domain/totals';
 import type { Category, Line, PaymentMethod, TicketSource } from '@/domain/types';
 import { pickImageFile, takePaperPhoto } from '@/services/paperCapture';
+import { useFinanzasStore } from '@/stores/finanzas';
 import { useGastosStore } from '@/stores/gastos';
 import { useSyncStore } from '@/stores/sync';
 
@@ -134,6 +145,7 @@ const props = defineProps<{ id: string }>();
 const router = useIonRouter();
 const fixedIds = useFixedCostIds();
 const gastos = useGastosStore();
+const finanzas = useFinanzasStore();
 const sync = useSyncStore();
 
 const ticket = computed(() => gastos.byId(props.id));
@@ -147,6 +159,9 @@ const currency = ref<'UYU' | 'USD'>('UYU');
 const store = ref('');
 const category = ref<{ category: Category; subcategory: string }>({ category: 'Otros', subcategory: 'Varios' });
 const payment = ref<PaymentMethod>('Efectivo');
+const accountId = ref<string>();
+const account = computed(() => finanzas.accounts.find((a) => a.id === accountId.value));
+const accountOpen = ref(false);
 const date = ref(todayIso());
 const note = ref('');
 const photo = ref<string>();
@@ -170,6 +185,7 @@ function load() {
   const base = t.lines[0] ?? parseQuickEntry(t.store);
   category.value = { category: base.category, subcategory: base.subcategory };
   payment.value = t.payment;
+  accountId.value = accountOf(t, finanzas.accounts)?.id;
   date.value = t.date;
   note.value = t.note ?? '';
   photo.value = t.photoUri;
@@ -200,6 +216,7 @@ const dirty = computed(() => {
     kind.value !== (t.kind ?? 'gasto') ||
     store.value.trim() !== t.store ||
     payment.value !== t.payment ||
+    accountId.value !== accountOf(t, finanzas.accounts)?.id ||
     date.value !== t.date ||
     note.value.trim() !== (t.note ?? '') ||
     photo.value !== t.photoUri ||
@@ -277,12 +294,10 @@ function applyCategory(value: { category: Category; subcategory: string }) {
   else lines.value[index] = { ...lines.value[index], ...value };
 }
 
-async function pickPayment() {
-  const sheet = await actionSheetController.create({
-    header: kind.value === 'ingreso' ? 'Cómo entró' : 'Medio de pago',
-    buttons: [...PAYMENTS.map((p) => ({ text: p, handler: () => void (payment.value = p) })), { text: 'Cancelar', role: 'cancel' }],
-  });
-  await sheet.present();
+function pickAccount(a: Account) {
+  accountId.value = a.id;
+  payment.value = a.payment;
+  accountOpen.value = false;
 }
 
 const photoOpen = ref(false);
@@ -314,6 +329,7 @@ async function save() {
     store: store.value,
     date: date.value,
     payment: payment.value,
+    accountId: accountId.value,
     kind: kind.value === 'ingreso' ? 'ingreso' : undefined,
     note: note.value,
     photoUri: photo.value,

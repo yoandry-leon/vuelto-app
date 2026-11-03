@@ -102,7 +102,7 @@ export function billCategory(bill: Bill): { category: Category; subcategory: str
 }
 
 /** El gasto que se agrega a Movimientos al marcar pagada una factura. */
-export function billPaymentTicket(bill: Bill, input: { amount: number; date: IsoDate; payment: PaymentMethod }): NewTicket {
+export function billPaymentTicket(bill: Bill, input: { amount: number; date: IsoDate; payment: PaymentMethod; accountId?: string }): NewTicket {
   const { category, subcategory } = billCategory(bill);
   return {
     source: 'texto',
@@ -112,6 +112,7 @@ export function billPaymentTicket(bill: Bill, input: { amount: number; date: Iso
     lines: [{ raw: bill.name, pretty: bill.name, category, subcategory, amount: input.amount }],
     discounts: [],
     billId: bill.id,
+    ...(input.accountId ? { accountId: input.accountId } : {}),
   };
 }
 

@@ -23,6 +23,8 @@ export interface RemoteExpense {
   kind?: 'ingreso';
   /** El pago de una factura (gasto fijo). */
   billId?: string;
+  /** La cuenta de la que salió. */
+  accountId?: string;
   note?: string;
 }
 
@@ -55,6 +57,7 @@ export function toRemote(t: Ticket): RemoteExpenseInput {
   if (t.usd) remote.usd = t.usd;
   if (t.kind) remote.kind = t.kind;
   if (t.billId) remote.billId = t.billId;
+  if (t.accountId) remote.accountId = t.accountId;
   if (t.note) remote.note = t.note;
   if (t.cfe) remote.cfe = { rut: t.cfe.rut, cfeType: t.cfe.cfeType, serie: t.cfe.serie, number: t.cfe.number };
   return remote;
@@ -84,7 +87,8 @@ function reflects(t: Ticket, r: RemoteExpense): boolean {
     mine.payment === r.payment &&
     mine.category === r.category &&
     (mine.kind ?? '') === (r.kind ?? '') &&
-    (mine.note ?? '') === (r.note ?? '')
+    (mine.note ?? '') === (r.note ?? '') &&
+    (mine.accountId ?? '') === (r.accountId ?? '')
   );
 }
 
@@ -136,6 +140,7 @@ export function mergeRemote(local: Ticket[], remote: RemoteExpense[], now: strin
       ...(r.usd ? { usd: r.usd } : {}),
       ...(r.kind ? { kind: r.kind } : {}),
       ...(r.billId ? { billId: r.billId } : {}),
+      ...(r.accountId ? { accountId: r.accountId } : {}),
       ...(r.note ? { note: r.note } : {}),
       sync: { state: 'subido', remoteId: r.id, syncedAt: now },
       createdAt: r.createdAt,

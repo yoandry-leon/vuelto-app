@@ -5,6 +5,7 @@ import { cfeKey } from '@/domain/cfe';
 import { monthKey, todayIso } from '@/domain/dates';
 import { round2, USD_RATE } from '@/domain/money';
 import type { PaperItem, ReadItem } from '@/domain/paper';
+import { assignAccounts, lastAccountId } from '@/domain/accounts';
 import { phraseDrafts } from '@/domain/carga';
 import { CATEGORIES, SUBCATEGORIES } from '@/domain/categories';
 import { parseQuickEntries } from '@/domain/quickEntry';
@@ -13,6 +14,7 @@ import { mainCategory } from '@/domain/totals';
 import type { Category, CfeHeader, IsoDate, Line, NewTicket, PaymentMethod, Ticket } from '@/domain/types';
 import { learnFromTicket, vendorKey, type VendorRules } from '@/domain/vendors';
 import { KEYS, stored } from '@/services/storage';
+import { useFinanzasStore } from './finanzas';
 
 const gastosDb = stored<Ticket[]>(KEYS.gastos);
 const puestosDb = stored<Record<string, VendorRules>>(KEYS.puestos);
@@ -27,6 +29,8 @@ export interface TicketEdit {
   store: string;
   date: IsoDate;
   payment: PaymentMethod;
+  /** La cuenta elegida; `payment` es su tipo. */
+  accountId?: string;
   kind?: 'ingreso';
   note?: string;
   photoUri?: string;
@@ -102,7 +106,10 @@ export const useGastosStore = defineStore('gastos', () => {
   /** Guarda de una vez lo que se armó en la pantalla de registrar (la carga). */
   async function addAll(news: NewTicket[]): Promise<Ticket[]> {
     const now = new Date().toISOString();
-    const saved = news.map((n): Ticket => ({ ...n, id: newId(), sync: { state: 'pendiente' }, createdAt: now }));
+    // Lo que llega sin cuenta (dictado, Siri, el reloj, un ticket leído) toma la de su medio de pago
+    const { accounts } = useFinanzasStore();
+    const withAccounts = assignAccounts(news, accounts, lastAccountId(tickets.value, accounts));
+    const saved = withAccounts.map((n): Ticket => ({ ...n, id: newId(), sync: { state: 'pendiente' }, createdAt: now }));
     if (!saved.length) return saved;
     tickets.value.push(...saved);
     month.value = monthKey(saved[saved.length - 1].date);
@@ -144,6 +151,7 @@ export const useGastosStore = defineStore('gastos', () => {
     t.store = e.store.trim() || t.store;
     t.date = e.date;
     t.payment = e.payment;
+    if (e.accountId) t.accountId = e.accountId;
     if (e.kind) t.kind = e.kind;
     else delete t.kind;
     if (e.note?.trim()) t.note = e.note.trim();

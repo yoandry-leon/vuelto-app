@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { seedBills, seedBudget, seedDebts, seedGoals, seedPortfolio, type Portfolio } from '@/data/seed';
+import { type Account, DEFAULT_ACCOUNTS } from '@/domain/accounts';
 import type { Bill } from '@/domain/bills';
 import type { Budget } from '@/domain/budget';
 import { todayIso } from '@/domain/dates';
@@ -17,6 +18,8 @@ interface FinanzasData {
   portfolio: Portfolio;
   /** Avisos de vencimiento 2 días antes (la persona los prende en Facturas). Falta en datos viejos. */
   remindersOn?: boolean;
+  /** Las cuentas de las que salen los gastos. Falta en datos viejos: se usan las de siempre. */
+  accounts?: Account[];
 }
 
 const db = stored<FinanzasData>(KEYS.finanzas);
@@ -34,10 +37,19 @@ export const useFinanzasStore = defineStore('finanzas', () => {
   const bills = ref<Bill[]>([]);
   const portfolio = ref<Portfolio>(seedPortfolio());
   const remindersOn = ref(false);
+  const accounts = ref<Account[]>(DEFAULT_ACCOUNTS.map((a) => ({ ...a })));
   const loaded = ref(false);
 
   async function persist() {
-    await db.save({ budget: budget.value, goals: goals.value, debts: debts.value, bills: bills.value, portfolio: portfolio.value, remindersOn: remindersOn.value });
+    await db.save({
+      budget: budget.value,
+      goals: goals.value,
+      debts: debts.value,
+      bills: bills.value,
+      portfolio: portfolio.value,
+      remindersOn: remindersOn.value,
+      accounts: accounts.value,
+    });
   }
 
   function apply(data: FinanzasData) {
@@ -47,6 +59,28 @@ export const useFinanzasStore = defineStore('finanzas', () => {
     bills.value = data.bills;
     portfolio.value = data.portfolio;
     remindersOn.value = data.remindersOn ?? false;
+    accounts.value = data.accounts?.length ? data.accounts : DEFAULT_ACCOUNTS.map((a) => ({ ...a }));
+  }
+
+  async function addAccount(account: Omit<Account, 'id'>): Promise<Account> {
+    const created: Account = { ...account, id: `cuenta${Date.now().toString(36)}` };
+    accounts.value.push(created);
+    await persist();
+    return created;
+  }
+
+  async function updateAccount(id: string, patch: Partial<Omit<Account, 'id'>>) {
+    const a = accounts.value.find((x) => x.id === id);
+    if (!a) return;
+    Object.assign(a, patch);
+    await persist();
+  }
+
+  /** Borra una cuenta (nunca la última). Sus gastos quedan con la primera cuenta de su mismo tipo. */
+  async function removeAccount(id: string) {
+    if (accounts.value.length <= 1) return;
+    accounts.value = accounts.value.filter((a) => a.id !== id);
+    await persist();
   }
 
   async function setRemindersOn(on: boolean) {
@@ -175,7 +209,7 @@ export const useFinanzasStore = defineStore('finanzas', () => {
   }
 
   return {
-    budget, goals, debts, bills, portfolio, remindersOn, loaded,
+    budget, goals, debts, bills, portfolio, remindersOn, accounts, loaded, addAccount, updateAccount, removeAccount,
     init, setBudget, addMovement, addGoal, addInvestmentGoal, updateGoal, payDebt, markBillPaid, unmarkBillPaid, setBillAmount, addBill, updateBill, removeBill, setSimulation, setHoldingValue, setRemindersOn, resetDemo,
   };
 });

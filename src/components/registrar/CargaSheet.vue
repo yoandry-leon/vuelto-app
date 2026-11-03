@@ -20,7 +20,7 @@
           <span class="num" aria-hidden="true">{{ i + 1 }}</span>
           <button type="button" class="grow" @click="open(d)">
             <span class="t">{{ d.title }}</span>
-            <span class="s">{{ draftSubtitle(d) }} · {{ draftOrigin(d) }}</span>
+            <span class="s">{{ draftSubtitle(d, finanzas.accounts) }} · {{ draftOrigin(d) }}</span>
           </button>
           <span class="amt rb-amount">{{ draftAmountText(d) }}</span>
           <button type="button" class="x" :aria-label="`Quitar ${d.title}`" @click="carga.remove(d.id)">
@@ -32,7 +32,7 @@
           <span class="num current" aria-hidden="true">{{ carga.items.length + 1 }}</span>
           <button type="button" class="grow" @click="emit('close')">
             <span class="t">{{ d.title }}</span>
-            <span class="s">{{ draftSubtitle(d) }} · el que estabas cargando</span>
+            <span class="s">{{ draftSubtitle(d, finanzas.accounts) }} · el que estabas cargando</span>
           </button>
           <span class="amt rb-amount">{{ draftAmountText(d) }}</span>
           <button type="button" class="x" :aria-label="`Borrar ${d.title}`" @click="emit('discardEditor')">
@@ -57,6 +57,7 @@ import { computed } from 'vue';
 import { cartTotal, type Draft, draftAmountText, draftOrigin, draftSubtitle, splitPurchase } from '@/domain/carga';
 import { formatPesos } from '@/domain/money';
 import { newDraftId, useCargaStore } from '@/stores/carga';
+import { useFinanzasStore } from '@/stores/finanzas';
 
 /** Lo que está escrito en el teclado (cero o más borradores: una frase puede ser varios gastos). */
 const props = defineProps<{ editing: Draft[] }>();
@@ -67,6 +68,7 @@ const props = defineProps<{ editing: Draft[] }>();
 const emit = defineEmits<{ close: []; save: []; edit: [draft: Draft]; discardEditor: [] }>();
 
 const carga = useCargaStore();
+const finanzas = useFinanzasStore();
 const all = computed(() => [...carga.items, ...props.editing]);
 
 /** Un gasto suelto se corrige en el teclado; una compra con productos se puede separar. */
