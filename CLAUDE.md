@@ -71,6 +71,19 @@ The browser has no camera. Registrar's camera screen shows a drawn receipt with 
 - Movimientos has a "Cuenta" chip (`?cuenta=<id>` filters). "Tus cuentas" (`views/CuentasPage.vue`, `/tabs/movimientos/cuentas`) shows `spentByAccount` for a month. That includes fixed costs and excludes incomes; there are no balances. Tapping an account lets you see its expenses, rename it, change its type or delete it (never the last one).
 - `accountId` travels to the server (`RemoteExpense.accountId`) and is part of `reflects`, so changing an expense's account uploads it again.
 
+**Bank statements** (`domain/statement.ts`, `views/ExtractoPage.vue`, `/tabs/movimientos/extracto?cuenta=<id>`). A statement is imported into one account, from "Tus cuentas" ("Importar extracto del banco", or the account's own sheet). The file is read on the phone (`services/statementFile.ts`) and never uploaded.
+- Reading: `decodeText` falls back to Windows-1252 when the file isn't valid UTF-8, since many banks export Latin-1. `parseCsv` detects `;`, tab or `,` (in that order: with decimal commas, local banks use `;`), handles quotes, and also reads the HTML tables some banks save as `.xls`. A real Excel file (`looksLikeSpreadsheet`) gets "guardalo como CSV".
+- Columns: `detectLayout` looks for the header in the first 40 rows (banks put account details first) and recognizes fecha, descripción/concepto/detalle, débito/crédito or a signed importe, a separate U$S column (credit-card statements) and a currency column. Without a header it guesses from the data. The user can change any column ("Cambiar columnas") or flip the signs. With one signed column, expenses are negative, except in a credit-card account or a file with no negatives at all.
+- `readRows` skips "Saldo anterior" and total rows and counts the rows it couldn't read (`skipped`). `parseBankDate` reads `dd/mm/aaaa`, `dd/mm/aa`, ISO and "12 oct 2026"; `parseBankAmount` reads `(1.200,50)` and `1.200,50-` as negatives.
+- `planImport` sorts each row into a group:
+  - Already imported: a ticket has its `bank.ref`.
+  - Ya anotados: an expense with the same amount (±`QR_TOLERANCE`) and date within `MATCH_DAYS` (3). It prefers the statement's own account, then the same type. Cash expenses are never matched automatically.
+  - Nuevos: registered as `source: 'extracto'` tickets, with the store from `storeFromBankText` ("COMPRA CON TARJETA DE DEBITO TATA 1234" → "Tata") and the category of an earlier ticket with that name, or else `productCategory`.
+  - Entradas de plata and pases (`rowKind`: card payments, "SU PAGO", ATM withdrawals) come unchecked, because they usually move money between the user's own accounts.
+- Tapping a row links it by hand to another expense (`linkCandidates`: ±10 days, closest amount and date first), registers it as new, changes its category or leaves it out. A manual link to a single-line peso expense with a different amount takes the bank's amount (`linkedAmount`); a ticket with several lines keeps its own.
+- `gastos.importStatement(news, links)` adds the new tickets and marks the linked ones with `Ticket.bank` (`{ ref, text }`), moving them to the statement's account (so they upload again). `rowRefs` (account, date, amount, text, plus a counter for identical rows) makes a second import of an overlapping statement add nothing. `bank` travels as `RemoteExpense.bank`, and Editar gasto shows the bank's text.
+- In the browser, "Probar con un extracto de ejemplo" loads `demoStatement` (`data/seed.ts`), built from this month's debit expenses plus new rows.
+
 **Dates** are local `IsoDate` strings (`'2026-09-30'`), never `Date` objects in the model. Month keys are `'YYYY-MM'` (`monthKey`, `shiftMonth`). UI labels come from `relativeDay` ("Hoy", "Ayer"), `dueLabel` ("Vie 9 · en 3 días") and `timeOf`.
 
 **Registering an expense** (`views/RegistrarPage.vue`, "Nuevos gastos"). It works like a cart: expenses go into "la carga" (`stores/carga.ts`, the pure helpers are in `domain/carga.ts`) and nothing is saved until "Guardar todo", which calls `gastos.addAll` and returns to Inicio with a toast. Every cart entry is a `Draft` (`{ id, title, ticket: NewTicket }`).
@@ -96,11 +109,12 @@ The browser has no camera. Registrar's camera screen shows a drawn receipt with 
 - Ticket por QR (`TicketQr.vue`): `parseCfeQr` (DGI URL `...consultaQR/cfe?RUT,TIPO,SERIE,NUMERO,TOTAL,FECHA,CODIGO`, validates the RUT check digit) → store name from `gastos.storeNameFor` (`KNOWN_STORES` or an earlier ticket with that RUT), category and payment → `demoReceiptReader.readLines(header)` → `qrDraft`. A ticket already saved or already in the cart is detected by `cfeKey` (rut-type-serie-number) and can't be added again. "Separar por productos" takes a photo and opens the paper screen with the QR as context. That makes one QR ticket with the photo's lines, and any amount above the QR total becomes a "Descuentos del ticket" discount.
 - Ticket en papel (`TicketPapel.vue`): the paper-receipt flow described below. Rows are grouped by category (`productCategory` from the name, `paperGroups`), and `paperDrafts` adds either one expense or one per category ("Por categoría"). A doubtful amount must be confirmed ("Sí, es $ 210") or fixed before adding.
 
-**Ticket sources.** `Ticket.source` takes one of five values (`SOURCE_LABEL` in `domain/categories.ts`):
+**Ticket sources.** `Ticket.source` takes one of six values (`SOURCE_LABEL` in `domain/categories.ts`):
 - `'qr'`: verified through the DGI QR.
 - `'papel'`: a photo of a receipt with no QR, such as a market stall's.
 - `'voz'` and `'texto'`: a phrase, kept in `Ticket.phrase`.
 - `'whatsapp'`: registered through the bot and downloaded on sync.
+- `'extracto'`: imported from a bank statement (see Bank statements).
 
 A ticket with `review` set (e.g. "No se leyó el monto") is not uploaded until the user types the amount in `GastoPage` and saves.
 

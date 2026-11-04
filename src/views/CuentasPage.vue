@@ -31,6 +31,8 @@
           </button>
         </div>
 
+        <button type="button" class="rb-btn secondary" @click="importStatement()">Importar extracto del banco</button>
+
         <span class="rb-note">Cada gasto sale de una cuenta, y su medio de pago es el tipo de esa cuenta. Incluye los gastos fijos: la plata salió igual, aunque no cuente en el presupuesto del día a día.</span>
       </div>
     </ion-content>
@@ -71,6 +73,7 @@ async function openAccount(a: Account) {
     header: `${a.name} · ${ACCOUNT_KIND[a.payment]}`,
     buttons: [
       { text: 'Ver sus gastos', handler: () => void router.push(`/tabs/movimientos?cuenta=${encodeURIComponent(a.id)}`) },
+      { text: 'Importar extracto (CSV)', handler: () => importStatement(a) },
       { text: 'Cambiar el nombre', handler: () => void rename(a) },
       { text: 'Cambiar el tipo', handler: () => void changeKind(a) },
       ...(finanzas.accounts.length > 1 ? [{ text: 'Eliminar cuenta', role: 'destructive', handler: () => void confirmDelete(a) }] : []),
@@ -78,6 +81,11 @@ async function openAccount(a: Account) {
     ],
   });
   await sheet.present();
+}
+
+/** Subir el extracto del banco de esa cuenta (sin cuenta, la pantalla propone una). */
+function importStatement(a?: Account) {
+  router.push(a ? `/tabs/movimientos/extracto?cuenta=${encodeURIComponent(a.id)}` : '/tabs/movimientos/extracto');
 }
 
 async function rename(a: Account) {

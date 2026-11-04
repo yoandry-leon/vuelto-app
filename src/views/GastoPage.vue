@@ -91,6 +91,7 @@
             <span>{{ statusText }}</span>
           </div>
           <span v-if="fixedIds.has(ticket.id)" class="rb-note">Es el pago de una factura: se ve entre tus gastos pero no sale del presupuesto del día a día.</span>
+          <span v-if="ticket.bank" class="rb-note">En el extracto del banco: “{{ ticket.bank.text }}”.</span>
 
           <div class="actions">
             <button type="button" class="rb-btn primary" :disabled="!canSave" @click="save">Guardar cambios</button>
@@ -258,6 +259,7 @@ const ORIGIN: Record<TicketSource, string> = {
   qr: 'con el QR de la DGI',
   papel: 'con una foto',
   whatsapp: 'por WhatsApp',
+  extracto: 'del extracto del banco',
 };
 const syncState = computed(() => {
   const t = ticket.value;

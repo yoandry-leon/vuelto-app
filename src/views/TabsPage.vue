@@ -40,7 +40,7 @@ const route = useRoute();
  * Registrar y los formularios (editar un movimiento, nueva meta) van a pantalla completa, como en la propuesta:
  * sin barra inferior, con Cancelar arriba.
  */
-const FULL_SCREEN = /^\/tabs\/(registrar|metas\/nueva|metas\/inversion\/nueva|inicio\/facturas\/|[a-z]+\/gasto\/)/;
+const FULL_SCREEN = /^\/tabs\/(registrar|metas\/nueva|metas\/inversion\/nueva|inicio\/facturas\/|movimientos\/extracto|[a-z]+\/gasto\/)/;
 const fullScreen = computed(() => FULL_SCREEN.test(route.path));
 watch(
   () => route.path,

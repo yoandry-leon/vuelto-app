@@ -37,6 +37,7 @@ export const SOURCE_LABEL: Record<TicketSource, string> = {
   voz: 'Voz',
   texto: 'Teclado',
   whatsapp: 'WhatsApp',
+  extracto: 'Extracto',
 };
 
 /**

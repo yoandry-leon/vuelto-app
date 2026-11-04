@@ -1,7 +1,9 @@
 import type { Bill } from '@/domain/bills';
 import type { Budget } from '@/domain/budget';
 import { rutCheckDigit } from '@/domain/cfe';
-import { daysInMonth, monthKey, shiftMonth, todayIso } from '@/domain/dates';
+import { daysInMonth, monthKey, shiftDay, shiftMonth, todayIso } from '@/domain/dates';
+import { formatUYU } from '@/domain/money';
+import { ticketTotals } from '@/domain/totals';
 import type { Debt, SavingsGoal } from '@/domain/goals';
 import type { ReadItem } from '@/domain/paper';
 import type { Holding, InvestmentGoal, SimulationAssumptions } from '@/domain/investment';
@@ -178,6 +180,48 @@ export function seedTickets(today: IsoDate = todayIso()): Ticket[] {
     // El alquiler del mes, marcado pagado en Facturas: se ve en Movimientos como gasto fijo y no sale del presupuesto
     gasto(d(1), 'texto', 'Alquiler', one('Alquiler', 'Servicios', 'Alquiler', 18200), 'Transferencia', { billId: 'alquiler', time: [9, 30] }),
   ];
+}
+
+/**
+ * Un extracto de débito de ejemplo, para probar la importación en el navegador. Repite hasta cuatro gastos con
+ * débito del mes (los que ya están anotados, con la fecha corrida un día como cuando el banco acredita después)
+ * y suma compras nuevas, un débito automático, un sueldo, un retiro y el pago de la tarjeta.
+ */
+export function demoStatement(tickets: Ticket[], today: IsoDate = todayIso()): string {
+  const d = (n: number) => dayOf(today, n);
+  const fecha = (iso: IsoDate) => iso.split('-').reverse().join('/');
+  const monto = (n: number) => formatUYU(n).replace('$ ', '');
+  const month = monthKey(today);
+  const anotados = tickets
+    .filter((t) => t.payment === 'Débito' && !t.kind && !t.usd && !t.review && !t.bank && !t.billId && monthKey(t.date) === month)
+    .slice(0, 4)
+    .map((t) => {
+      const next = shiftDay(t.date, 1);
+      return { date: next > today ? t.date : next, text: `COMPRA CON TARJETA DE DEBITO ${t.store.toUpperCase()} MONTEVIDEO`, amount: ticketTotals(t).net, credit: false };
+    });
+  const rows = [
+    { date: d(1), text: 'TRANSFERENCIA RECIBIDA SUELDO', amount: 62000, credit: true },
+    { date: d(2), text: 'COMPRA CON TARJETA DE DEBITO TATA 4410 MONTEVIDEO', amount: 1845.5, credit: false },
+    { date: d(3), text: 'DEBITO AUTOMATICO ANTEL', amount: 1590, credit: false },
+    { date: d(4), text: 'RETIRO REDBROU CAJERO 0021', amount: 2000, credit: false },
+    { date: d(5), text: 'MERCADOPAGO*LIBRERIA DEL SUR', amount: 760, credit: false },
+    { date: d(6), text: 'PAGO TARJETA VISA', amount: 8000, credit: false },
+    ...anotados,
+  ].sort((a, b) => (a.date < b.date ? -1 : 1));
+  let saldo = 48250;
+  const lines = rows.map((r) => {
+    saldo += r.credit ? r.amount : -r.amount;
+    return [fecha(r.date), r.text, r.credit ? '' : monto(r.amount), r.credit ? monto(r.amount) : '', monto(saldo)].join(';');
+  });
+  return [
+    'Banco;Banco de ejemplo;;;',
+    `Cuenta;Caja de ahorro en pesos;;;`,
+    `Período;${fecha(`${month}-01`)} al ${fecha(today)};;;`,
+    ';;;;',
+    'Fecha;Descripción;Débito;Crédito;Saldo',
+    `${fecha(`${month}-01`)};SALDO ANTERIOR;;;${monto(48250)}`,
+    ...lines,
+  ].join('\r\n');
 }
 
 export function seedBudget(): Budget {

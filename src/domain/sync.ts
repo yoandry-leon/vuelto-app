@@ -1,6 +1,6 @@
 import { cfeKey } from './cfe';
 import { mainCategory, ticketTotals } from './totals';
-import type { CfeHeader, Category, IsoDate, PaymentMethod, Ticket, TicketSource, UsdAmount } from './types';
+import type { BankRef, CfeHeader, Category, IsoDate, PaymentMethod, Ticket, TicketSource, UsdAmount } from './types';
 
 /** Un gasto como lo guarda el servidor del bot: una línea, sin el detalle de artículos. */
 export interface RemoteExpense {
@@ -25,6 +25,8 @@ export interface RemoteExpense {
   billId?: string;
   /** La cuenta de la que salió. */
   accountId?: string;
+  /** El movimiento del extracto bancario que es. */
+  bank?: BankRef;
   note?: string;
 }
 
@@ -58,6 +60,7 @@ export function toRemote(t: Ticket): RemoteExpenseInput {
   if (t.kind) remote.kind = t.kind;
   if (t.billId) remote.billId = t.billId;
   if (t.accountId) remote.accountId = t.accountId;
+  if (t.bank) remote.bank = t.bank;
   if (t.note) remote.note = t.note;
   if (t.cfe) remote.cfe = { rut: t.cfe.rut, cfeType: t.cfe.cfeType, serie: t.cfe.serie, number: t.cfe.number };
   return remote;
@@ -141,6 +144,7 @@ export function mergeRemote(local: Ticket[], remote: RemoteExpense[], now: strin
       ...(r.kind ? { kind: r.kind } : {}),
       ...(r.billId ? { billId: r.billId } : {}),
       ...(r.accountId ? { accountId: r.accountId } : {}),
+      ...(r.bank ? { bank: r.bank } : {}),
       ...(r.note ? { note: r.note } : {}),
       sync: { state: 'subido', remoteId: r.id, syncedAt: now },
       createdAt: r.createdAt,

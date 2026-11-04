@@ -9,6 +9,7 @@ import { assignAccounts, lastAccountId } from '@/domain/accounts';
 import { phraseDrafts } from '@/domain/carga';
 import { CATEGORIES, SUBCATEGORIES } from '@/domain/categories';
 import { parseQuickEntries } from '@/domain/quickEntry';
+import type { StatementLink } from '@/domain/statement';
 import { type Deletion, deletionsFor, mergeRemote, needsReview, pendingToUpload, type RemoteExpense } from '@/domain/sync';
 import { mainCategory } from '@/domain/totals';
 import type { Category, CfeHeader, IsoDate, Line, NewTicket, PaymentMethod, Ticket } from '@/domain/types';
@@ -172,6 +173,27 @@ export const useGastosStore = defineStore('gastos', () => {
   }
 
   /**
+   * Importa un extracto bancario: registra los movimientos nuevos y vincula los que ya estaban anotados, que
+   * quedan en la cuenta del extracto. Un vinculado cambia, así que vuelve a subir.
+   */
+  async function importStatement(news: NewTicket[], links: StatementLink[]): Promise<{ added: Ticket[]; linked: number }> {
+    let linked = 0;
+    for (const l of links) {
+      const t = byId(l.id);
+      if (!t || t.bank) continue;
+      t.bank = l.bank;
+      t.accountId = l.accountId;
+      t.payment = l.payment;
+      if (l.amount !== undefined && t.lines.length === 1) t.lines = [{ ...t.lines[0], amount: l.amount }];
+      t.sync = touched(t);
+      linked++;
+    }
+    const added = await addAll(news);
+    if (linked && !added.length) await persist();
+    return { added, linked };
+  }
+
+  /**
    * Borra uno o varios movimientos del teléfono. Quedan anotados para borrarlos también del servidor en la
    * próxima sincronización; si no, el servidor los devolvería al traer lo de la cuenta.
    */
@@ -220,7 +242,7 @@ export const useGastosStore = defineStore('gastos', () => {
 
   return {
     tickets, vendors, loaded, month, sorted, months, monthTickets, todayTickets, pending, toReview, knownVendors,
-    init, byId, findByCfe, storeNameFor, addAll, addFromPhrase, edit, remove,
+    init, byId, findByCfe, storeNameFor, addAll, addFromPhrase, edit, remove, importStatement,
     applyRemote, vendorRules, learnVendor, resetDemo, deletions, deletionsSynced,
   };
 });

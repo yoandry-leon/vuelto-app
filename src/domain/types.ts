@@ -46,9 +46,10 @@ export interface CfeHeader {
 /**
  * Cómo entró el gasto.
  * qr: QR de DGI (verificable) · papel: foto de un ticket sin QR · voz y texto: frase como en WhatsApp
- * ("450 feria efectivo") · whatsapp: registrado en el bot, llega al sincronizar.
+ * ("450 feria efectivo") · whatsapp: registrado en el bot, llega al sincronizar · extracto: importado del
+ * extracto del banco.
  */
-export type TicketSource = 'qr' | 'papel' | 'voz' | 'texto' | 'whatsapp';
+export type TicketSource = 'qr' | 'papel' | 'voz' | 'texto' | 'whatsapp' | 'extracto';
 
 /**
  * pendiente: registrado en el teléfono, todavía no subió a la cuenta del bot.
@@ -91,8 +92,18 @@ export interface Ticket {
   billId?: string;
   /** La cuenta de la que salió (o a la que entró). `payment` es el tipo de esa cuenta. Falta en datos viejos. */
   accountId?: string;
+  /** El movimiento del extracto bancario que es este gasto (importado de ahí o vinculado a uno ya anotado). */
+  bank?: BankRef;
   sync: SyncInfo;
   createdAt: string;
+}
+
+/** Un movimiento de un extracto bancario. */
+export interface BankRef {
+  /** Marca del movimiento (cuenta, fecha, monto y texto): con ella no se importa dos veces. */
+  ref: string;
+  /** Lo que dice el banco: "COMPRA CON TARJETA DE DEBITO TATA 123". */
+  text: string;
 }
 
 export interface UsdAmount {

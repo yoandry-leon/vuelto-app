@@ -65,6 +65,7 @@ tests/unit/        Vitest
 | Voz | Real: reconocimiento de iOS y Android dentro del teléfono cuando tiene el español descargado; entiende montos en palabras y "lucas" |
 | Cola offline y sincronización | Real en el teléfono; **el servidor del bot es simulado** (`services/syncServer.ts`) |
 | Presupuesto, metas, deudas, facturas, inversión | Real, datos locales |
+| Cuentas e importación del extracto bancario (CSV) | Real, se lee en el teléfono; las columnas se adivinan y se pueden corregir |
 | Widgets, pantalla bloqueada, Centro de control, botón de acción | Real en iPhone (iOS 18+) |
 | Siri y Atajos ("Anotar un gasto en Rumbo", "Cuánto me queda en Rumbo") | Real en iPhone, sin abrir la app |
 | Avisos de vencimiento | Real (notificaciones locales, se prenden en Facturas) |
