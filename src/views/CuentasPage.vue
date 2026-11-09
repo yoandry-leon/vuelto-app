@@ -31,7 +31,7 @@
           </button>
         </div>
 
-        <button type="button" class="rb-btn secondary" @click="importStatement()">Importar extracto del banco</button>
+        <button type="button" class="rb-btn secondary" @click="importStatement()">Importar y conciliar extracto</button>
 
         <span class="rb-note">Cada gasto sale de una cuenta, y su medio de pago es el tipo de esa cuenta. Incluye los gastos fijos: la plata salió igual, aunque no cuente en el presupuesto del día a día.</span>
       </div>
@@ -73,7 +73,7 @@ async function openAccount(a: Account) {
     header: `${a.name} · ${ACCOUNT_KIND[a.payment]}`,
     buttons: [
       { text: 'Ver sus gastos', handler: () => void router.push(`/tabs/movimientos?cuenta=${encodeURIComponent(a.id)}`) },
-      { text: 'Importar extracto (CSV)', handler: () => importStatement(a) },
+      { text: 'Importar y conciliar extracto', handler: () => importStatement(a) },
       { text: 'Cambiar el nombre', handler: () => void rename(a) },
       { text: 'Cambiar el tipo', handler: () => void changeKind(a) },
       ...(finanzas.accounts.length > 1 ? [{ text: 'Eliminar cuenta', role: 'destructive', handler: () => void confirmDelete(a) }] : []),

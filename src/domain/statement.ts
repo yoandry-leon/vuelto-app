@@ -1,5 +1,5 @@
 import type { Account } from './accounts';
-import { daysBetween } from './dates';
+import { daysBetween, shiftDay } from './dates';
 import { parseAmount, round2, USD_RATE } from './money';
 import { normalize } from './products';
 import { productCategory } from './quickEntry';
@@ -412,8 +412,18 @@ export interface ImportItem {
   subcategory: string;
 }
 
-/** Días de diferencia que se aceptan entre lo anotado y lo que dice el banco (que a veces lo acredita después). */
+/**
+ * Días de diferencia entre lo anotado y lo que dice el banco (que a veces lo acredita después) para vincular
+ * con un gasto de cualquier cuenta que no sea efectivo. Más lejos, solo con los de la misma cuenta.
+ */
 export const MATCH_DAYS = 3;
+
+/** Las fechas que cubre el extracto: del primer al último movimiento. */
+export function statementPeriod(rows: StatementRow[]): { from: IsoDate; to: IsoDate } | undefined {
+  if (!rows.length) return undefined;
+  const dates = rows.map((r) => r.date).sort();
+  return { from: dates[0], to: dates[dates.length - 1] };
+}
 
 /** El monto de un gasto en la moneda del movimiento del banco. */
 function amountIn(t: Ticket, currency: StatementRow['currency']): number | undefined {
@@ -439,27 +449,36 @@ function categoryFor(store: string, tickets: Ticket[]): { category: Category; su
 }
 
 /**
- * Arma la importación: qué movimientos ya se importaron, cuáles son gastos que la persona ya anotó (mismo
- * monto, fecha cercana; primero los de esta cuenta) y cuáles son nuevos. Los ingresos y los pases vienen sin
- * marcar: muchas veces son plata que se movió entre las propias cuentas.
- * Los gastos en efectivo no se vinculan solos: un monto chico se repite y casi nunca es el mismo.
+ * Arma la importación: qué movimientos ya se importaron, cuáles son gastos que la persona ya anotó y cuáles
+ * son nuevos. Un gasto anotado es el mismo movimiento si tiene el mismo monto y:
+ * - una fecha cercana (`MATCH_DAYS`), en cualquier cuenta que no sea efectivo; primero los de esta cuenta;
+ * - o, sin importar la fecha, es de esta cuenta y cae en las fechas del extracto (lo anotado con otro día). Un
+ *   pago de tarjeta o un retiro, no: el mismo monto redondo se repite en el mes.
+ * Las parejas más cercanas en fecha se arman primero. Los ingresos y los pases vienen sin marcar: muchas veces
+ * son plata que se movió entre las propias cuentas. Los gastos en efectivo no se vinculan solos: un monto chico
+ * se repite y casi nunca es el mismo.
  */
 export function planImport(rows: StatementRow[], tickets: Ticket[], account: Account): ImportItem[] {
   const refs = rowRefs(rows, account.id);
   const byRef = new Map(tickets.filter((t) => t.bank).map((t) => [t.bank!.ref, t.id]));
   const free = tickets.filter((t) => !t.bank && !t.review && (account.payment === 'Efectivo' || t.payment !== 'Efectivo'));
+  const period = statementPeriod(rows);
+  const inPeriod = (d: IsoDate) => !!period && d >= shiftDay(period.from, -MATCH_DAYS) && d <= shiftDay(period.to, MATCH_DAYS);
 
   // Todas las parejas posibles, de la mejor a la peor; cada gasto y cada movimiento se usan una vez
   const pairs: { row: number; id: string; score: number }[] = [];
   rows.forEach((r, i) => {
     if (byRef.has(refs[i])) return;
+    const anyDate = rowKind(r) !== 'pase';
     for (const t of free) {
       if (isIncome(t) !== r.income) continue;
       const amount = amountIn(t, r.currency);
       if (amount === undefined || Math.abs(amount - r.amount) > QR_TOLERANCE) continue;
       const days = Math.abs(daysBetween(t.date, r.date));
-      if (days > MATCH_DAYS) continue;
-      pairs.push({ row: i, id: t.id, score: accountDistance(t, account) * 10 + days });
+      const distance = accountDistance(t, account);
+      const near = days <= MATCH_DAYS;
+      if (!near && (!anyDate || distance > 0 || !inPeriod(t.date))) continue;
+      pairs.push({ row: i, id: t.id, score: (near ? 0 : 1000) + distance * 100 + days });
     }
   });
   pairs.sort((a, b) => a.score - b.score);
@@ -483,20 +502,137 @@ export function planImport(rows: StatementRow[], tickets: Ticket[], account: Acc
   });
 }
 
+/** Qué tan lejos está un monto anotado del que dice el banco: 0 si es el mismo, si no 1 más la diferencia relativa. */
+function amountGap(noted: number, bank: number): number {
+  return Math.abs(noted - bank) <= QR_TOLERANCE ? 0 : 1 + Math.abs(noted - bank) / Math.max(bank, 1);
+}
+
+/** Lo vinculado en esta importación: los gastos que ya tienen su movimiento del extracto. */
+function linkedIds(items: ImportItem[], except?: ImportItem): Set<string> {
+  return new Set(items.filter((x) => x !== except && x.match && x.action === 'vincular').map((x) => x.match!));
+}
+
 /**
  * Los gastos que se pueden elegir a mano para un movimiento: del mismo tipo (gasto o ingreso), todavía sin
- * vincular a otro movimiento, de hasta 10 días antes o después; primero los de monto y fecha más parecidos.
+ * vincular a otro movimiento y de las fechas del extracto (con 10 días de margen), sin importar el día.
+ * Primero los del mismo monto, del día más cercano; después los de monto más parecido.
  */
 export function linkCandidates(item: ImportItem, items: ImportItem[], tickets: Ticket[], limit = 8): Ticket[] {
-  const taken = new Set(items.filter((x) => x !== item && x.match && x.action === 'vincular').map((x) => x.match));
-  const distance = (t: Ticket) => {
-    const amount = amountIn(t, item.row.currency) ?? Math.abs(ticketTotals(t).net);
-    return Math.abs(amount - item.row.amount) / Math.max(item.row.amount, 1) + Math.abs(daysBetween(t.date, item.row.date)) / 10;
-  };
+  const taken = linkedIds(items, item);
+  const period = statementPeriod(items.map((x) => x.row)) ?? { from: item.row.date, to: item.row.date };
+  const from = shiftDay(period.from, -10);
+  const to = shiftDay(period.to, 10);
+  const distance = (t: Ticket) =>
+    amountGap(amountIn(t, item.row.currency) ?? Math.abs(ticketTotals(t).net), item.row.amount) + Math.abs(daysBetween(t.date, item.row.date)) / 1000;
   return tickets
-    .filter((t) => !t.bank && !taken.has(t.id) && isIncome(t) === item.row.income && Math.abs(daysBetween(t.date, item.row.date)) <= 10)
+    .filter((t) => !t.bank && !taken.has(t.id) && isIncome(t) === item.row.income && t.date >= from && t.date <= to)
     .sort((a, b) => distance(a) - distance(b))
     .slice(0, limit);
+}
+
+/** Al revés: los movimientos del extracto (salidas todavía sin vincular) que pueden ser un gasto anotado. */
+export function rowCandidates(t: Ticket, items: ImportItem[], limit = 8): ImportItem[] {
+  const currency = t.usd ? 'USD' : 'UYU';
+  const noted = amountIn(t, currency) ?? 0;
+  const distance = (i: ImportItem) => amountGap(noted, i.row.amount) + Math.abs(daysBetween(t.date, i.row.date)) / 1000;
+  return items
+    .filter((i) => !i.imported && !(i.match && i.action === 'vincular') && !i.row.income && i.row.currency === currency)
+    .sort((a, b) => distance(a) - distance(b))
+    .slice(0, limit);
+}
+
+/**
+ * Lo anotado que no aparece en el extracto: gastos de esta cuenta, en las fechas del extracto, sin un movimiento
+ * vinculado (ni de este extracto ni de uno anterior). Puede que el banco todavía no lo haya cobrado, que se haya
+ * pagado con otra cuenta o que esté anotado dos veces.
+ */
+export function notInStatement(items: ImportItem[], tickets: Ticket[], account: Account): Ticket[] {
+  const period = statementPeriod(items.map((i) => i.row));
+  if (!period) return [];
+  const linked = linkedIds(items);
+  return tickets
+    .filter((t) => accountDistance(t, account) === 0 && !isIncome(t) && !t.review && !t.bank && !linked.has(t.id) && t.date >= period.from && t.date <= period.to)
+    .sort((a, b) => (a.date === b.date ? a.createdAt.localeCompare(b.createdAt) : a.date < b.date ? -1 : 1));
+}
+
+/** La conciliación en una moneda. Se cumple `bank - rumbo = missing - extra + amounts`. */
+export interface ReconcileTotals {
+  /** Lo que salió según el banco: los gastos, y los pases solo si se registran o ya estaban anotados. */
+  bank: number;
+  /** Lo anotado que corresponde: lo vinculado (en cualquier cuenta o fecha) y lo de esta cuenta en esas fechas. */
+  rumbo: number;
+  /** Movimientos del banco sin un gasto anotado. */
+  missing: { count: number; amount: number };
+  /** Gastos anotados que no están en el extracto. */
+  extra: { count: number; amount: number };
+  /** En lo vinculado: lo que cobró el banco menos lo anotado, cuando no coincide. */
+  amounts: { count: number; amount: number };
+  /** La diferencia que queda al importar lo marcado (lo nuevo se registra y un gasto suelto toma el monto del banco). */
+  after: number;
+}
+
+export interface Reconciliation {
+  from: IsoDate;
+  to: IsoDate;
+  uyu: ReconcileTotals;
+  usd: ReconcileTotals;
+  /** Los gastos anotados que no están en el extracto (`notInStatement`). */
+  extra: Ticket[];
+}
+
+/**
+ * Concilia el extracto con lo anotado: cuánto salió según el banco, cuánto hay anotado y qué explica la
+ * diferencia. Sirve a fin de mes o en cualquier momento: cubre solo las fechas que trae el extracto.
+ */
+export function reconcile(items: ImportItem[], tickets: Ticket[], account: Account): Reconciliation | undefined {
+  const period = statementPeriod(items.map((i) => i.row));
+  if (!period) return undefined;
+  const extra = notInStatement(items, tickets, account);
+  const byId = new Map(tickets.map((t) => [t.id, t]));
+
+  const totals = (currency: StatementRow['currency']): ReconcileTotals => {
+    const r: ReconcileTotals = { bank: 0, rumbo: 0, missing: { count: 0, amount: 0 }, extra: { count: 0, amount: 0 }, amounts: { count: 0, amount: 0 }, after: 0 };
+    // Lo que se arregla al importar lo marcado
+    let fixes = 0;
+    for (const it of items) {
+      if (it.row.income || it.row.currency !== currency) continue;
+      const id = it.imported ?? (it.action === 'vincular' ? it.match : undefined);
+      const t = id ? byId.get(id) : undefined;
+      // Un pago de tarjeta o un retiro no es un gasto, salvo que se registre o ya esté anotado
+      if (it.kind === 'pase' && !t && it.action !== 'registrar') continue;
+      r.bank += it.row.amount;
+      if (!t) {
+        r.missing.count++;
+        r.missing.amount += it.row.amount;
+        if (it.action === 'registrar') fixes += it.row.amount;
+        continue;
+      }
+      const noted = amountIn(t, currency) ?? it.row.amount;
+      r.rumbo += noted;
+      const diff = round2(it.row.amount - noted);
+      if (Math.abs(diff) > QR_TOLERANCE) {
+        r.amounts.count++;
+        r.amounts.amount += diff;
+        if (!it.imported && linkedAmount(t, it.row) !== undefined) fixes += diff;
+      }
+    }
+    for (const t of extra) {
+      const noted = amountIn(t, currency);
+      if (noted === undefined) continue;
+      r.rumbo += noted;
+      r.extra.count++;
+      r.extra.amount += noted;
+    }
+    r.bank = round2(r.bank);
+    r.rumbo = round2(r.rumbo);
+    r.missing.amount = round2(r.missing.amount);
+    r.extra.amount = round2(r.extra.amount);
+    r.amounts.amount = round2(r.amounts.amount);
+    r.after = round2(r.bank - r.rumbo - fixes);
+    return r;
+  };
+
+  return { ...period, uyu: totals('UYU'), usd: totals('USD'), extra };
 }
 
 /**

@@ -45,7 +45,8 @@ const fullScreen = computed(() => FULL_SCREEN.test(route.path));
 watch(
   () => route.path,
   (p) => {
-    if (p.startsWith('/tabs/') && !p.startsWith('/tabs/registrar')) lastTab.value = p;
+    // Las pantallas completas no cuentan: desde Registrar se abre el extracto, y Cancelar no tiene que volver ahí
+    if (p.startsWith('/tabs/') && !FULL_SCREEN.test(p)) lastTab.value = p;
   },
   { immediate: true },
 );

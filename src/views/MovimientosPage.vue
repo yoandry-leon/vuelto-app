@@ -140,6 +140,7 @@ async function pickAccount() {
     buttons: [
       ...spent.map((r) => ({ text: `${r.account.name} · ${formatPesos(-r.spent)}`, handler: () => void (accountFilterId.value = r.account.id) })),
       { text: 'Ver tus cuentas', handler: () => void router.push('/tabs/movimientos/cuentas') },
+      { text: 'Importar y conciliar extracto', handler: () => void router.push('/tabs/movimientos/extracto') },
       { text: 'Cancelar', role: 'cancel' },
     ],
   });

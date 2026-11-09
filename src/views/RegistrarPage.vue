@@ -35,6 +35,10 @@
               <button type="button" class="tool" aria-label="Escanear ticket" @click="openSheet('camara')">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>
               </button>
+              <!-- Los movimientos del banco van por su propia pantalla: no pasan por la carga -->
+              <button type="button" class="tool" aria-label="Importar y conciliar el extracto del banco" @click="router.push('/tabs/movimientos/extracto')">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M12 11v6M9 14l3 3 3-3" /></svg>
+              </button>
             </div>
           </div>
           <div class="amount-line">
@@ -389,8 +393,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 .editor { background: #fff; border-radius: 14px; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 0 0 2px var(--rb-accent); }
 .ed-head { display: flex; justify-content: space-between; align-items: center; }
 .ed-title { font-size: 14px; font-weight: 600; color: var(--rb-accent); }
-.ed-tools { display: flex; gap: 6px; }
-.rb-wrap .tool { width: 44px; height: 36px; border-radius: 10px; background: var(--rb-bg); display: flex; align-items: center; justify-content: center; }
+.ed-tools { display: flex; gap: 4px; }
+.rb-wrap .tool { width: 40px; height: 36px; border-radius: 10px; background: var(--rb-bg); display: flex; align-items: center; justify-content: center; }
 .amount-line { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .rb-wrap .cur { height: 36px; padding: 0 12px; border-radius: 999px; background: var(--rb-segment); font-size: 14px; font-weight: 600; }
 .amount { font-size: 36px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }

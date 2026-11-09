@@ -4,7 +4,7 @@
       <div class="rb-wrap extracto">
         <div class="rb-navbar">
           <button type="button" class="rb-navlink" @click="goBack">Cancelar</button>
-          <span class="title">Importar extracto</span>
+          <span class="title">Extracto del banco</span>
           <span />
         </div>
 
@@ -25,7 +25,7 @@
             </span>
             <span class="t">Subí el extracto de tu banco</span>
             <span class="s">Bajalo en CSV desde la web o la app del banco; si viene en Excel, abrilo y guardalo como CSV. Se lee en el teléfono y no se manda a ningún lado.</span>
-            <span class="s">Lo que ya anotaste se vincula con el extracto, y lo que falta se registra. Vos elegís qué entra.</span>
+            <span class="s">Lo que ya anotaste se vincula con el extracto, lo que falta se registra, y ves si lo anotado coincide con lo que dice el banco. Sirve a fin de mes o en cualquier momento. Vos elegís qué entra.</span>
           </div>
           <button type="button" class="rb-btn primary" :disabled="!account" @click="pick">Elegir archivo</button>
           <button v-if="!native" type="button" class="rb-btn soft demo" :disabled="!account" @click="useDemo">Probar con un extracto de ejemplo</button>
@@ -51,6 +51,28 @@
             <span class="s">Probá cambiar las columnas: la fecha, la descripción y el monto.</span>
           </div>
 
+          <!-- Lo que salió según el banco contra lo anotado en esas fechas, y qué explica la diferencia -->
+          <section v-if="conc" class="rb-section">
+            <div class="rb-section-head">
+              <span class="rb-label">Conciliación</span>
+              <span class="rb-small">{{ period }}</span>
+            </div>
+            <div class="rb-card conc">
+              <div class="line"><span>Gastos según el banco</span><span class="rb-amount">{{ formatPesos(conc.uyu.bank) }}</span></div>
+              <div class="line"><span>Anotado en Rumbo</span><span class="rb-amount">{{ formatPesos(conc.uyu.rumbo) }}</span></div>
+              <div class="line total" :class="{ ok: matches }">
+                <span>{{ matches ? 'Coincide con el banco' : 'Diferencia' }}</span>
+                <svg v-if="matches" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
+                <span v-else class="rb-amount">{{ formatPesos(Math.abs(round2(conc.uyu.bank - conc.uyu.rumbo))) }}</span>
+              </div>
+              <div v-if="conc.uyu.missing.count" class="line why"><span>Falta anotar · {{ conc.uyu.missing.count }}</span><span class="rb-amount">{{ formatPesos(conc.uyu.missing.amount) }}</span></div>
+              <div v-if="conc.uyu.extra.count" class="line why"><span>Anotado y no está en el banco · {{ conc.uyu.extra.count }}</span><span class="rb-amount">{{ formatPesos(conc.uyu.extra.amount) }}</span></div>
+              <div v-if="conc.uyu.amounts.count" class="line why"><span>Montos distintos · {{ conc.uyu.amounts.count }}</span><span class="rb-amount">{{ formatPesos(conc.uyu.amounts.amount, { sign: true }) }}</span></div>
+              <div v-if="conc.usd.bank || conc.usd.rumbo" class="line why"><span>En dólares: banco {{ formatUsd(conc.usd.bank) }} · Rumbo {{ formatUsd(conc.usd.rumbo) }}</span></div>
+              <span v-if="!matches" class="foot">{{ afterText }}</span>
+            </div>
+          </section>
+
           <section v-for="g in groups" :key="g.key" class="rb-section">
             <div class="rb-section-head">
               <span class="rb-label">{{ g.title }}</span>
@@ -71,6 +93,23 @@
               </div>
             </div>
             <span class="rb-note">{{ g.note }}</span>
+          </section>
+
+          <section v-if="conc?.extra.length" class="rb-section">
+            <div class="rb-section-head">
+              <span class="rb-label">Anotado y no está en el banco</span>
+              <span class="rb-small">{{ conc.extra.length }}</span>
+            </div>
+            <div class="rb-group">
+              <button v-for="t in conc.extra" :key="t.id" type="button" class="row extra" @click="openExtra(t)">
+                <span class="grow">
+                  <span class="t">{{ t.store }}</span>
+                  <span class="s">{{ ticketSubtitle(t) }}</span>
+                </span>
+                <span class="amt rb-amount">{{ t.usd ? formatUsd(-t.usd.amount, { sign: true }) : formatPesos(-Math.abs(ticketTotals(t).net), { sign: true }) }}</span>
+              </button>
+            </div>
+            <span class="rb-note">Son gastos de esta cuenta en esas fechas que el extracto no trae. Puede que el banco todavía no los haya cobrado, que los hayas pagado con otra cuenta o que estén anotados dos veces. Tocá uno para elegir su movimiento del extracto o corregirlo.</span>
           </section>
 
           <span v-if="imported" class="rb-note">{{ imported === 1 ? '1 movimiento ya estaba importado' : `${imported} movimientos ya estaban importados` }}: no se vuelven a agregar.</span>
@@ -101,13 +140,13 @@ import AccountSheet from '@/components/AccountSheet.vue';
 import { demoStatement } from '@/data/seed';
 import type { Account } from '@/domain/accounts';
 import { categoryLabel, CATEGORIES, SUBCATEGORIES } from '@/domain/categories';
-import { shortDate } from '@/domain/dates';
-import { formatPesos, formatUsd } from '@/domain/money';
+import { daysBetween, shortDate } from '@/domain/dates';
+import { formatPesos, formatUsd, round2 } from '@/domain/money';
 import {
   columnNames, detectLayout, type ImportItem, importChanges, linkCandidates, linkedAmount, looksLikeSpreadsheet, parseCsv, planImport,
-  readRows, type StatementColumns, type StatementLayout,
+  MATCH_DAYS, readRows, reconcile, rowCandidates, type StatementColumns, type StatementLayout,
 } from '@/domain/statement';
-import { ticketTotals } from '@/domain/totals';
+import { mainCategory, ticketTotals } from '@/domain/totals';
 import type { Ticket } from '@/domain/types';
 import { pickStatementFile } from '@/services/statementFile';
 import { useFinanzasStore } from '@/stores/finanzas';
@@ -211,6 +250,50 @@ const groups = computed(() => {
   ].filter((g) => g.items.length);
 });
 const imported = computed(() => items.value.filter((i) => i.imported).length);
+
+const conc = computed(() => (account.value && items.value.length ? reconcile(items.value, gastos.tickets, account.value) : undefined));
+const matches = computed(() => !!conc.value && Math.abs(conc.value.uyu.bank - conc.value.uyu.rumbo) <= 0.5 && Math.abs(conc.value.usd.bank - conc.value.usd.rumbo) <= 0.5);
+const afterText = computed(() => {
+  const r = conc.value;
+  if (!r) return '';
+  if (Math.abs(r.uyu.after) <= 0.5) return 'Al importar lo marcado, coincide.';
+  const why = r.uyu.extra.count ? ': revisá lo anotado que no está en el banco' : '';
+  return `Al importar lo marcado, quedan ${formatPesos(Math.abs(r.uyu.after))} de diferencia${why}.`;
+});
+
+function ticketSubtitle(t: Ticket): string {
+  const category = mainCategory(t);
+  return `${categoryLabel(category, t.lines.find((l) => l.category === category)?.subcategory)} · ${day(t.date)}`;
+}
+
+/** Un gasto anotado que no está en el extracto: elegir su movimiento, o abrirlo para corregirlo (otra cuenta, borrarlo). */
+async function openExtra(t: Ticket) {
+  const sheet = await actionSheetController.create({
+    header: ticketText(t),
+    buttons: [
+      { text: 'Es un movimiento del extracto…', handler: () => void chooseRow(t) },
+      { text: 'Ver o corregir el gasto', handler: () => void router.push(`/tabs/movimientos/gasto/${t.id}`) },
+      { text: 'Cancelar', role: 'cancel' },
+    ],
+  });
+  await sheet.present();
+}
+
+async function chooseRow(t: Ticket) {
+  const options = rowCandidates(t, items.value);
+  if (!options.length) {
+    await notice('No hay movimientos para elegir', 'Todos los movimientos del extracto ya están vinculados con algo que anotaste.');
+    return;
+  }
+  const sheet = await actionSheetController.create({
+    header: `¿Cuál movimiento del banco es ${t.store}?`,
+    buttons: [
+      ...options.map((i) => ({ text: `${i.store} · ${day(i.row.date)} · ${amountText(i)}`, handler: () => { i.match = t.id; i.action = 'vincular'; } })),
+      { text: 'Cancelar', role: 'cancel' },
+    ],
+  });
+  await sheet.present();
+}
 const toAdd = computed(() => items.value.filter((i) => i.action === 'registrar').length);
 const toLink = computed(() => items.value.filter((i) => i.action === 'vincular').length);
 
@@ -236,7 +319,10 @@ function subtitle(it: ImportItem): string {
   const t = it.match ? ticketsById.value.get(it.match) : undefined;
   if (t) {
     const amount = linkedAmount(t, it.row);
-    return amount === undefined ? `Anotado como ${t.store} · ${day(t.date)}` : `${t.store}: de ${formatPesos(Math.abs(ticketTotals(t).net))} pasa a ${formatPesos(amount)}`;
+    if (amount !== undefined) return `${t.store}: de ${formatPesos(Math.abs(ticketTotals(t).net))} pasa a ${formatPesos(amount)}`;
+    // Anotado otro día: se ven las dos fechas
+    if (Math.abs(daysBetween(t.date, it.row.date)) > MATCH_DAYS) return `${t.store} · anotado el ${day(t.date)}, banco ${day(it.row.date)}`;
+    return `Anotado como ${t.store} · ${day(t.date)}`;
   }
   if (it.kind === 'gasto') return `${categoryLabel(it.category, it.subcategory)} · ${day(it.row.date)}`;
   return `${day(it.row.date)} · ${it.row.text}`;
@@ -387,5 +473,12 @@ function goBack() {
 .row.off .t, .row.off .amt { color: var(--rb-muted); }
 .amt { font-size: 16px; font-weight: 500; }
 .amt.income { color: var(--rb-accent); }
+.conc { gap: 8px; }
+.conc .line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 16px; }
+.conc .line.total { align-items: center; border-top: 1px solid var(--rb-line); padding-top: 10px; margin-top: 2px; font-weight: 600; }
+.conc .line.total.ok { color: var(--rb-accent); }
+.conc .line.why { font-size: 14px; color: var(--rb-muted); }
+.conc .foot { font-size: 14px; line-height: 1.45; color: var(--rb-muted); }
+.rb-wrap .row.extra { width: 100%; text-align: left; }
 .bottom { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); margin-top: auto; padding-top: 4px; }
 </style>

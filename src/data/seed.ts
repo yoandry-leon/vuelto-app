@@ -184,8 +184,9 @@ export function seedTickets(today: IsoDate = todayIso()): Ticket[] {
 
 /**
  * Un extracto de débito de ejemplo, para probar la importación en el navegador. Repite hasta cuatro gastos con
- * débito del mes (los que ya están anotados, con la fecha corrida un día como cuando el banco acredita después)
- * y suma compras nuevas, un débito automático, un sueldo, un retiro y el pago de la tarjeta.
+ * débito del mes (los que ya están anotados, con la fecha corrida un día como cuando el banco acredita después, y
+ * el último cinco días, para la conciliación sin importar la fecha) y suma compras nuevas, un débito automático,
+ * un sueldo, un retiro y el pago de la tarjeta.
  */
 export function demoStatement(tickets: Ticket[], today: IsoDate = todayIso()): string {
   const d = (n: number) => dayOf(today, n);
@@ -195,8 +196,8 @@ export function demoStatement(tickets: Ticket[], today: IsoDate = todayIso()): s
   const anotados = tickets
     .filter((t) => t.payment === 'Débito' && !t.kind && !t.usd && !t.review && !t.bank && !t.billId && monthKey(t.date) === month)
     .slice(0, 4)
-    .map((t) => {
-      const next = shiftDay(t.date, 1);
+    .map((t, i) => {
+      const next = shiftDay(t.date, i === 3 ? 5 : 1);
       return { date: next > today ? t.date : next, text: `COMPRA CON TARJETA DE DEBITO ${t.store.toUpperCase()} MONTEVIDEO`, amount: ticketTotals(t).net, credit: false };
     });
   const rows = [

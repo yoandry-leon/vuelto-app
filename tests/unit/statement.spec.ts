@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Account } from '@/domain/accounts';
 import {
   decodeText, detectLayout, importChanges, linkCandidates, parseBankAmount, parseBankDate, parseCsv, planImport,
-  readRows, storeFromBankText, type StatementRow,
+  readRows, reconcile, rowCandidates, storeFromBankText, type StatementRow,
 } from '@/domain/statement';
 import { mergeRemote, toRemote } from '@/domain/sync';
 import type { Ticket } from '@/domain/types';
@@ -210,11 +210,58 @@ describe('importar a una cuenta', () => {
     ]);
   });
 
-  it('a mano se puede elegir otro gasto: los de monto y fecha más parecidos primero', () => {
+  it('a mano se puede elegir otro gasto sin importar el día: primero los del mismo monto', () => {
     const plan = planImport(rows, tickets, BROU);
     const retiro = plan[3];
-    const options = linkCandidates(retiro, plan, [...tickets, gasto('cerca', 1990, '2026-10-05')]);
-    expect(options.map((t) => t.id)).toEqual(['cerca', 'viejo', 'stm']);
+    const options = linkCandidates(retiro, plan, [...tickets, gasto('cerca', 1990, '2026-10-05'), gasto('otro-mes', 2000, '2026-08-01')]);
+    expect(options.map((t) => t.id)).toEqual(['viejo', 'cerca', 'stm']);
+  });
+
+  it('sin importar la fecha: el mismo monto en esta cuenta, anotado otro día del extracto', () => {
+    const mes: StatementRow[] = [
+      { line: 1, date: '2026-10-02', text: 'COMPRA TATA', amount: 1845.5, income: false, currency: 'UYU' },
+      { line: 2, date: '2026-10-28', text: 'COMPRA DISCO', amount: 980, income: false, currency: 'UYU' },
+      { line: 3, date: '2026-10-29', text: 'RETIRO CAJERO', amount: 2000, income: false, currency: 'UYU' },
+    ];
+    const anotados = [
+      gasto('tata', 1845.5, '2026-10-20', { accountId: 'brou' }),
+      // Otro día y otra cuenta: no
+      gasto('disco', 980, '2026-10-10', { accountId: 'itau' }),
+      // Un retiro solo se vincula con fecha cercana
+      gasto('alquiler', 2000, '2026-10-05', { accountId: 'brou' }),
+    ];
+    expect(planImport(mes, anotados, BROU).map((i) => i.match)).toEqual(['tata', undefined, undefined]);
+    // Uno de otra tarjeta de débito con la fecha cercana gana a uno de esta cuenta con otro día
+    const dos = [gasto('lejos', 1845.5, '2026-10-25', { accountId: 'brou' }), gasto('cerca', 1845.5, '2026-10-03', { accountId: 'itau' })];
+    expect(planImport(mes.slice(0, 2), dos, BROU)[0].match).toBe('cerca');
+  });
+
+  it('concilia: lo que dice el banco, lo anotado y qué explica la diferencia', () => {
+    const conKiosco = [...tickets, gasto('kiosco', 300, '2026-10-04', { accountId: 'brou' }), gasto('fuera', 700, '2026-10-20', { accountId: 'brou' })];
+    const plan = planImport(rows, conKiosco, BROU);
+    const r = reconcile(plan, conKiosco, BROU)!;
+    expect([r.from, r.to]).toEqual(['2026-10-02', '2026-10-06']);
+    // Banco: Tata, Antel y los dos boletos (sin el sueldo ni el retiro). Rumbo: Tata, Antel y el kiosco, que no está en el banco
+    expect(r.uyu).toMatchObject({ bank: 3539.5, rumbo: 3735.5, missing: { count: 2, amount: 104 }, extra: { count: 1, amount: 300 }, amounts: { count: 0 } });
+    expect(r.extra.map((t) => t.id)).toEqual(['kiosco']);
+    // Al registrar los boletos queda solo el kiosco
+    expect(r.uyu.after).toBe(-300);
+    expect(r.uyu.bank - r.uyu.rumbo).toBeCloseTo(r.uyu.missing.amount - r.uyu.extra.amount + r.uyu.amounts.amount);
+  });
+
+  it('desde lo anotado se elige el movimiento del banco, y un monto distinto cuenta en la conciliación', () => {
+    const boleto = gasto('boleto', 50, '2026-10-06', { accountId: 'brou' });
+    const all = [...tickets, boleto];
+    const plan = planImport(rows, all, BROU);
+    const [primero] = rowCandidates(boleto, plan);
+    expect([primero.store, primero.row.amount]).toEqual(['Stm', 52]);
+    primero.match = boleto.id;
+    primero.action = 'vincular';
+    const r = reconcile(plan, all, BROU)!;
+    expect(r.extra).toEqual([]);
+    expect(r.uyu.amounts).toEqual({ count: 1, amount: 2 });
+    // El otro boleto se registra y el vinculado toma el monto del banco: coincide
+    expect(r.uyu.after).toBe(0);
   });
 
   it('el vínculo con el extracto viaja al servidor y vuelve', () => {
